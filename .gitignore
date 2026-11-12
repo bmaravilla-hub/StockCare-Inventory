@@ -30,3 +30,8 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+# React / Vite
+node_modules/
+dist/
+*.tsbuildinfo
