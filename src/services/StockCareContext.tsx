@@ -161,10 +161,19 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
 
   // Suscribirse en tiempo real al catálogo de productos en Cloud Firestore (onSnapshot)
   useEffect(() => {
-    if (!isFirebaseConfigured) {
-      setIsLoadingProducts(false);
+    if (!isFirebaseConfigured || !isAuthReady) {
       return;
     }
+
+    if (!session) {
+      setProducts([]);
+      setIsLoadingProducts(false);
+      setProductsError(null);
+      return;
+    }
+
+    setIsLoadingProducts(true);
+    setProductsError(null);
 
     const unsubscribe = subscribeToProducts(
       (items) => {
@@ -180,14 +189,23 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [session?.id, isAuthReady]);
 
   // Suscribirse en tiempo real al catálogo de proveedores en Cloud Firestore (onSnapshot)
   useEffect(() => {
-    if (!isFirebaseConfigured) {
-      setIsSuppliersLoading(false);
+    if (!isFirebaseConfigured || !isAuthReady) {
       return;
     }
+
+    if (!session) {
+      setSuppliers([]);
+      setIsSuppliersLoading(false);
+      setSuppliersError(null);
+      return;
+    }
+
+    setIsSuppliersLoading(true);
+    setSuppliersError(null);
 
     const unsubscribe = subscribeToSuppliers(
       (items) => {
@@ -203,11 +221,11 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [session?.id, isAuthReady]);
 
-  // Cargar inventario desde Firestore al iniciar si Firebase está configurado
+  // Cargar inventario desde Firestore al iniciar si Firebase está configurado y el usuario está autenticado
   useEffect(() => {
-    if (!isFirebaseConfigured) return;
+    if (!isFirebaseConfigured || !isAuthReady || !session) return;
     let isMounted = true;
     fetchFirestoreInventory().then((remoteData) => {
       if (isMounted && remoteData) {
@@ -223,7 +241,7 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [session?.id, isAuthReady]);
 
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
