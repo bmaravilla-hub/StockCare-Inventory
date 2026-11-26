@@ -35,8 +35,11 @@ export interface Product {
   minStock: number;
   status: ProductStatus;
   description?: string;
+  currentStock: number;
   createdAt: string;
   updatedAt: string;
+  createdBy?: string;
+  updatedBy?: string;
 }
 
 export interface Batch {

@@ -25,13 +25,15 @@ import {
 } from './authService';
 import {
   fetchFirestoreInventory,
-  persistProduct,
   persistBatch,
   persistEntry,
   persistExit,
   persistMovement,
   persistSettings,
   DEFAULT_SYSTEM_SETTINGS,
+  subscribeToProducts,
+  createProductFirestore,
+  updateProductFirestore,
 } from './firestoreService';
 
 export interface ProductInput {
@@ -74,7 +76,6 @@ export interface ActionResult<T = undefined> {
 }
 
 export interface InventoryState {
-  products: Product[];
   entries: EntryRecord[];
   exits: ExitRecord[];
   batches: Batch[];
@@ -83,7 +84,6 @@ export interface InventoryState {
 }
 
 const INITIAL_STATE: InventoryState = {
-  products: [],
   entries: [],
   exits: [],
   batches: [],
@@ -95,6 +95,8 @@ export interface StockCareContextValue {
   session: UserSession | null;
   isAuthReady: boolean;
   products: Product[];
+  isLoadingProducts: boolean;
+  productsError: string | null;
   entries: EntryRecord[];
   exits: ExitRecord[];
   batches: Batch[];
@@ -113,8 +115,8 @@ export interface StockCareContextValue {
   logout: () => void;
   updateProfile: (payload: { fullName: string; branch?: string }) => Promise<ActionResult>;
   updateSettings: (next: SystemSettings) => void;
-  createProduct: (input: ProductInput) => ActionResult<Product>;
-  updateProduct: (id: string, input: ProductInput) => ActionResult<Product>;
+  createProduct: (input: ProductInput) => Promise<ActionResult<Product>>;
+  updateProduct: (id: string, input: ProductInput) => Promise<ActionResult<Product>>;
   registerEntry: (input: EntryInput) => ActionResult<EntryRecord>;
   registerExit: (input: ExitInput) => ActionResult<ExitRecord>;
   addToast: (toast: Omit<ToastMessage, 'id'>) => void;
@@ -128,6 +130,9 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const [session, setSession] = useState<UserSession | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
+  const [productsError, setProductsError] = useState<string | null>(null);
   const [state, setState] = useState<InventoryState>(INITIAL_STATE);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -140,6 +145,29 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
     return () => unsubscribe();
   }, []);
 
+  // Suscribirse en tiempo real al catálogo de productos en Cloud Firestore (onSnapshot)
+  useEffect(() => {
+    if (!isFirebaseConfigured) {
+      setIsLoadingProducts(false);
+      return;
+    }
+
+    const unsubscribe = subscribeToProducts(
+      (items) => {
+        setProducts(items);
+        setIsLoadingProducts(false);
+        setProductsError(null);
+      },
+      (err) => {
+        console.error('Error en suscripción de productos Firestore:', err);
+        setProductsError('No fue posible sincronizar el catálogo de productos con la base de datos.');
+        setIsLoadingProducts(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
   // Cargar inventario desde Firestore al iniciar si Firebase está configurado
   useEffect(() => {
     if (!isFirebaseConfigured) return;
@@ -147,7 +175,6 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
     fetchFirestoreInventory().then((remoteData) => {
       if (isMounted && remoteData) {
         setState({
-          products: remoteData.products,
           batches: remoteData.batches,
           entries: remoteData.entries,
           exits: remoteData.exits,
@@ -184,7 +211,7 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
         addToast({
           type: 'success',
           title: `Bienvenido, ${res.user.fullName}`,
-          message: `Sesión iniciada con Firebase Auth (${res.user.roleLabel}).`,
+          message: `Sesión iniciada correctamente (${res.user.roleLabel}).`,
         });
         return { ok: true, data: res.user };
       }
@@ -306,105 +333,41 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   const createProduct = useCallback(
-    (input: ProductInput): ActionResult<Product> => {
-      const cleanCode = input.code.trim().toUpperCase();
-      const cleanName = input.name.trim();
-      if (!cleanCode || !cleanName || !input.category.trim() || !input.presentation.trim()) {
-        return { ok: false, error: 'Complete todos los campos obligatorios del producto.' };
+    async (input: ProductInput): Promise<ActionResult<Product>> => {
+      if (!session) {
+        return { ok: false, error: 'Debe iniciar sesión para registrar un producto.' };
       }
-      if (input.minStock < 0 || !Number.isFinite(input.minStock)) {
-        return { ok: false, error: 'El stock mínimo no puede ser negativo.' };
+      const res = await createProductFirestore(input, session.id);
+      if (res.ok && res.data) {
+        addToast({
+          type: 'success',
+          title: 'Producto registrado',
+          message: `${res.data.code} — ${res.data.name}`,
+        });
+        return { ok: true, data: res.data };
       }
-      const duplicate = state.products.some(
-        (p) => p.code.toUpperCase() === cleanCode
-      );
-      if (duplicate) {
-        return {
-          ok: false,
-          error: `Ya existe un producto registrado con el código ${cleanCode}.`,
-        };
-      }
-
-      const now = new Date().toISOString();
-      const newProduct: Product = {
-        id: `prod-${Date.now()}`,
-        code: cleanCode,
-        name: cleanName,
-        category: input.category.trim(),
-        presentation: input.presentation.trim(),
-        minStock: Math.floor(input.minStock),
-        status: input.status,
-        description: input.description?.trim() || undefined,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      setState((prev) => ({
-        ...prev,
-        products: [newProduct, ...prev.products],
-      }));
-
-      persistProduct(newProduct);
-
-      addToast({
-        type: 'success',
-        title: 'Producto registrado',
-        message: `${newProduct.code} — ${newProduct.name}`,
-      });
-
-      return { ok: true, data: newProduct };
+      return { ok: false, error: res.error };
     },
-    [state.products, addToast]
+    [session, addToast]
   );
 
   const updateProduct = useCallback(
-    (id: string, input: ProductInput): ActionResult<Product> => {
-      const existing = state.products.find((p) => p.id === id);
-      if (!existing) {
-        return { ok: false, error: 'El producto solicitado no existe.' };
+    async (id: string, input: ProductInput): Promise<ActionResult<Product>> => {
+      if (!session) {
+        return { ok: false, error: 'Debe iniciar sesión para actualizar un producto.' };
       }
-      const cleanCode = input.code.trim().toUpperCase();
-      const duplicate = state.products.some(
-        (p) => p.id !== id && p.code.toUpperCase() === cleanCode
-      );
-      if (duplicate) {
-        return {
-          ok: false,
-          error: `Otro producto ya utiliza el código ${cleanCode}.`,
-        };
+      const res = await updateProductFirestore(id, input, session.id);
+      if (res.ok && res.data) {
+        addToast({
+          type: 'success',
+          title: 'Producto actualizado',
+          message: `${res.data.code} — ${res.data.name}`,
+        });
+        return { ok: true, data: res.data };
       }
-      if (input.minStock < 0 || !Number.isFinite(input.minStock)) {
-        return { ok: false, error: 'El stock mínimo no puede ser negativo.' };
-      }
-
-      const updated: Product = {
-        ...existing,
-        code: cleanCode,
-        name: input.name.trim(),
-        category: input.category.trim(),
-        presentation: input.presentation.trim(),
-        minStock: Math.floor(input.minStock),
-        status: input.status,
-        description: input.description?.trim() || undefined,
-        updatedAt: new Date().toISOString(),
-      };
-
-      setState((prev) => ({
-        ...prev,
-        products: prev.products.map((p) => (p.id === id ? updated : p)),
-      }));
-
-      persistProduct(updated);
-
-      addToast({
-        type: 'success',
-        title: 'Producto actualizado',
-        message: `${updated.code} — ${updated.name}`,
-      });
-
-      return { ok: true, data: updated };
+      return { ok: false, error: res.error };
     },
-    [state.products, addToast]
+    [session, addToast]
   );
 
   const registerEntry = useCallback(
@@ -474,7 +437,7 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
       const newMovements: MovementRecord[] = [];
       const runningStockByProduct = new Map<string, number>();
 
-      for (const prod of state.products) {
+      for (const prod of products) {
         runningStockByProduct.set(
           prod.id,
           getProductTotalStock(prod.id, nextBatches)
@@ -552,7 +515,7 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
 
       return { ok: true, data: newEntry };
     },
-    [session, state.batches, state.products, addToast]
+    [session, state.batches, products, addToast]
   );
 
   const registerExit = useCallback(
@@ -679,7 +642,9 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
       value={{
         session,
         isAuthReady,
-        products: state.products,
+        products,
+        isLoadingProducts,
+        productsError,
         entries: state.entries,
         exits: state.exits,
         batches: state.batches,

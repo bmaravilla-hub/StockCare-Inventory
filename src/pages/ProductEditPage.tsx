@@ -10,9 +10,20 @@ import { useStockCare } from '../hooks/useStockCare';
 export const ProductEditPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { products, updateProduct } = useStockCare();
+  const { products, isLoadingProducts, updateProduct } = useStockCare();
 
   const product = products.find((p) => p.id === id);
+
+  if (isLoadingProducts) {
+    return (
+      <div className="flex min-h-[300px] items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-teal-600 border-t-transparent" />
+          <span className="text-sm font-medium text-slate-500">Cargando producto...</span>
+        </div>
+      </div>
+    );
+  }
 
   if (!product) {
     return (
@@ -58,8 +69,8 @@ export const ProductEditPage: React.FC = () => {
           status: product.status,
           description: product.description,
         }}
-        onSubmit={(values) => {
-          const res = updateProduct(product.id, values);
+        onSubmit={async (values) => {
+          const res = await updateProduct(product.id, values);
           if (res.ok) {
             navigate('/productos');
           }

@@ -130,9 +130,39 @@ service cloud.firestore {
     }
 
     match /products/{productId} {
+      // Lectura permitida a usuarios autenticados
       allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated();
-      allow delete: if isAuthenticated();
+
+      // Creación permitida a usuarios autenticados con validaciones de campos requeridos
+      allow create: if isAuthenticated()
+        && request.resource.data.code is string
+        && request.resource.data.code.size() >= 2
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 3
+        && request.resource.data.category is string
+        && request.resource.data.presentation is string
+        && request.resource.data.minStock is int
+        && request.resource.data.minStock >= 0
+        && request.resource.data.status in ['Activo', 'Inactivo']
+        && request.resource.data.currentStock == 0
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid;
+
+      // Actualización permitida garantizando inmutabilidad de createdAt, createdBy y currentStock
+      allow update: if isAuthenticated()
+        && request.resource.data.code is string
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 3
+        && request.resource.data.minStock is int
+        && request.resource.data.minStock >= 0
+        && request.resource.data.status in ['Activo', 'Inactivo']
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.currentStock == resource.data.currentStock
+        && request.resource.data.updatedBy == request.auth.uid;
+
+      // Prohibido eliminar productos físicamente para preservar integridad referencial e histórica
+      allow delete: if false;
     }
 
     match /batches/{batchId} {

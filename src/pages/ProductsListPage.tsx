@@ -19,7 +19,7 @@ interface ProductRow extends Product {
 }
 
 export const ProductsListPage: React.FC = () => {
-  const { session, products, batches, settings } = useStockCare();
+  const { session, products, isLoadingProducts, productsError, batches, settings } = useStockCare();
   const canEdit = session?.role === 'BODEGA';
 
   const [search, setSearch] = useState('');
@@ -187,10 +187,28 @@ export const ProductsListPage: React.FC = () => {
         columns={columns}
         data={rows}
         rowKey={(r) => r.id}
-        emptyTitle="No hay productos que coincidan"
-        emptyDescription="Pruebe limpiando los filtros de búsqueda o registre un nuevo producto."
+        isLoading={isLoadingProducts}
+        error={productsError}
+        emptyTitle={
+          products.length === 0 && !search && !categoryFilter && !statusFilter
+            ? 'No hay productos registrados.'
+            : 'No hay productos que coincidan'
+        }
+        emptyDescription={
+          products.length === 0 && !search && !categoryFilter && !statusFilter
+            ? 'El catálogo de medicamentos e insumos farmacéuticos se encuentra vacío en la base de datos.'
+            : 'Pruebe limpiando los filtros de búsqueda o registre un nuevo producto.'
+        }
         emptyAction={
-          (search || categoryFilter || statusFilter) && (
+          products.length === 0 && !search && !categoryFilter && !statusFilter ? (
+            canEdit && (
+              <Link to="/productos/nuevo">
+                <Button variant="primary" size="sm" leftIcon={<Plus className="h-4 w-4" />}>
+                  Registrar producto
+                </Button>
+              </Link>
+            )
+          ) : search || categoryFilter || statusFilter ? (
             <Button
               variant="outline"
               size="sm"
@@ -202,7 +220,7 @@ export const ProductsListPage: React.FC = () => {
             >
               Limpiar filtros
             </Button>
-          )
+          ) : undefined
         }
       />
 

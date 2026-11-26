@@ -12,7 +12,7 @@ import type { ProductInput } from '../../services/StockCareContext';
 interface ProductFormProps {
   mode: 'create' | 'edit';
   initialValues?: ProductInput;
-  onSubmit: (values: ProductInput) => { ok: boolean; error?: string };
+  onSubmit: (values: ProductInput) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
   onCancel: () => void;
 }
 
@@ -41,6 +41,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const validate = (): ProductInput | null => {
     const nextErrors: Record<string, string> = {};
@@ -98,16 +99,26 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     setConfirmOpen(true);
   };
 
-  const handleConfirmedSave = () => {
+  const handleConfirmedSave = async () => {
     const validated = validate();
     if (!validated) {
       setConfirmOpen(false);
       return;
     }
-    const result = onSubmit(validated);
-    setConfirmOpen(false);
-    if (!result.ok) {
-      setSubmitError(result.error ?? 'No se pudo guardar el producto.');
+    setIsSubmitting(true);
+    setSubmitError(null);
+    try {
+      const result = await onSubmit(validated);
+      if (!result.ok) {
+        setSubmitError(result.error ?? 'No se pudo guardar el producto.');
+      } else {
+        setConfirmOpen(false);
+      }
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      setSubmitError(error.message ?? 'Error inesperado al guardar el producto.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -196,12 +207,14 @@ export const ProductForm: React.FC<ProductFormProps> = ({
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-3">
-        <Button variant="outline" onClick={onCancel}>
+        <Button variant="outline" onClick={onCancel} disabled={isSubmitting}>
           Cancelar
         </Button>
         <Button
           type="submit"
           variant="primary"
+          isLoading={isSubmitting}
+          disabled={isSubmitting}
           leftIcon={<Save className="h-4 w-4" />}
         >
           {mode === 'create' ? 'Registrar producto' : 'Guardar cambios'}
@@ -210,8 +223,9 @@ export const ProductForm: React.FC<ProductFormProps> = ({
 
       <ConfirmModal
         isOpen={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
+        onClose={() => !isSubmitting && setConfirmOpen(false)}
         onConfirm={handleConfirmedSave}
+        isLoading={isSubmitting}
         title={
           mode === 'create'
             ? 'Confirmar registro de producto'
