@@ -12,7 +12,7 @@ import type { EntryRecord } from '../types';
 import { formatDateDisplay } from '../utils/date';
 
 export const EntriesListPage: React.FC = () => {
-  const { session, entries, products, settings } = useStockCare();
+  const { session, entries, isEntriesLoading, entriesError, products, settings } = useStockCare();
   const canCreate = session?.role === 'BODEGA';
 
   const [search, setSearch] = useState('');
@@ -22,8 +22,8 @@ export const EntriesListPage: React.FC = () => {
   const providers = useMemo(() => {
     const unique = new Set(
       entries
-        .map((e) => e.provider)
-        .filter((p) => Boolean(p && p.trim()))
+        .map((e) => e.supplierName || e.provider)
+        .filter((p): p is string => Boolean(p && p.trim()))
     );
     return Array.from(unique).sort();
   }, [entries]);
@@ -31,12 +31,15 @@ export const EntriesListPage: React.FC = () => {
   const filteredEntries = useMemo(() => {
     const q = search.trim().toLowerCase();
     return entries.filter((entry) => {
-      if (providerFilter && entry.provider !== providerFilter) return false;
+      const providerLabel = entry.supplierName || entry.provider || '';
+      if (providerFilter && providerLabel !== providerFilter) return false;
       if (!q) return true;
       const matchesDoc = entry.documentNumber.toLowerCase().includes(q);
-      const matchesProvider = entry.provider.toLowerCase().includes(q);
+      const matchesProvider = providerLabel.toLowerCase().includes(q);
       const matchesBatch = entry.items.some((i) =>
-        i.batchNumber.toLowerCase().includes(q)
+        i.batchNumber.toLowerCase().includes(q) ||
+        (i.productCode && i.productCode.toLowerCase().includes(q)) ||
+        (i.productName && i.productName.toLowerCase().includes(q))
       );
       return matchesDoc || matchesProvider || matchesBatch;
     });
@@ -65,7 +68,9 @@ export const EntriesListPage: React.FC = () => {
       key: 'provider',
       header: 'Proveedor',
       render: (row) => (
-        <span className="font-medium text-slate-900">{row.provider}</span>
+        <span className="font-medium text-slate-900">
+          {row.supplierName || row.provider || 'Sin proveedor'}
+        </span>
       ),
     },
     {
@@ -153,8 +158,23 @@ export const EntriesListPage: React.FC = () => {
         columns={columns}
         data={filteredEntries}
         rowKey={(r) => r.id}
-        emptyTitle="No se encontraron entradas"
-        emptyDescription="No hay recepciones que coincidan con los criterios aplicados."
+        isLoading={isEntriesLoading}
+        error={entriesError}
+        emptyTitle={search || providerFilter ? 'No se encontraron entradas' : 'No hay entradas registradas.'}
+        emptyDescription={
+          search || providerFilter
+            ? 'No hay recepciones que coincidan con los criterios aplicados.'
+            : 'Aún no se han recibido facturas ni ingresos de mercadería en el inventario.'
+        }
+        emptyAction={
+          !search && !providerFilter && canCreate ? (
+            <Link to="/entradas/nueva">
+              <Button variant="primary" size="sm" leftIcon={<Plus className="h-4 w-4" />}>
+                Registrar entrada
+              </Button>
+            </Link>
+          ) : undefined
+        }
       />
 
       <EntryReceiptModal

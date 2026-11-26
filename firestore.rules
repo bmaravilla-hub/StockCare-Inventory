@@ -163,7 +163,7 @@ service cloud.firestore {
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.updatedBy == request.auth.uid;
 
-      // Actualización permitida garantizando inmutabilidad de createdAt, createdBy y currentStock
+      // Actualización permitida garantizando inmutabilidad de createdAt y createdBy, y stock no negativo
       allow update: if isAuthenticated()
         && request.resource.data.code is string
         && request.resource.data.name is string
@@ -173,7 +173,8 @@ service cloud.firestore {
         && request.resource.data.status in ['Activo', 'Inactivo']
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.currentStock == resource.data.currentStock
+        && request.resource.data.currentStock is int
+        && request.resource.data.currentStock >= 0
         && request.resource.data.updatedBy == request.auth.uid;
 
       // Prohibido eliminar productos físicamente para preservar integridad referencial e histórica
@@ -206,14 +207,47 @@ service cloud.firestore {
     }
 
     match /batches/{batchId} {
+      // Lectura permitida a usuarios autenticados
       allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated();
-      allow delete: if isAuthenticated();
+
+      // Creación permitida con campos requeridos y auditoría
+      allow create: if isAuthenticated()
+        && request.resource.data.productId is string
+        && request.resource.data.entryId is string
+        && request.resource.data.supplierId is string
+        && request.resource.data.batchNumber is string
+        && request.resource.data.expiryDate is string
+        && request.resource.data.initialQuantity is int
+        && request.resource.data.initialQuantity > 0
+        && request.resource.data.quantity is int
+        && request.resource.data.quantity >= 0
+        && request.resource.data.createdBy == request.auth.uid;
+
+      // Actualización atómica permitida manteniendo inmutabilidad del lote y cantidad no negativa
+      allow update: if isAuthenticated()
+        && request.resource.data.productId == resource.data.productId
+        && request.resource.data.batchNumber == resource.data.batchNumber
+        && request.resource.data.expiryDate == resource.data.expiryDate
+        && request.resource.data.quantity is int
+        && request.resource.data.quantity >= 0;
+
+      // Prohibido eliminar lotes físicamente
+      allow delete: if false;
     }
 
     match /entries/{entryId} {
+      // Lectura permitida a usuarios autenticados
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
+
+      // Creación permitida con documento, proveedor, auditoría e ítems
+      allow create: if isAuthenticated()
+        && request.resource.data.documentNumber is string
+        && request.resource.data.supplierId is string
+        && request.resource.data.supplierName is string
+        && request.resource.data.registeredByUid == request.auth.uid
+        && request.resource.data.items.size() > 0;
+
+      // Prohibido modificar o eliminar entradas para preservar trazabilidad fiscal y contable
       allow update, delete: if false;
     }
 
@@ -225,7 +259,10 @@ service cloud.firestore {
 
     match /movements/{movementId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
+      allow create: if isAuthenticated()
+        && request.resource.data.type in ['Entrada', 'Salida']
+        && request.resource.data.quantity is int
+        && request.resource.data.quantity > 0;
       allow update, delete: if false;
     }
 

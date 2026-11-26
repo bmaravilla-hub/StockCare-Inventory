@@ -72,12 +72,16 @@ export interface SupplierInput {
 export interface Batch {
   id: string;
   productId: string;
-  batchNumber: string;
-  quantity: number;
-  initialQuantity: number;
-  expiryDate: string; // YYYY-MM-DD
   entryId: string;
+  supplierId: string;
+  batchNumber: string;
+  expiryDate: string; // YYYY-MM-DD
+  initialQuantity: number;
+  quantity: number;
+  status: BatchExpiryStatus;
   createdAt: string;
+  updatedAt?: string;
+  createdBy?: string;
 }
 
 export type BatchExpiryStatus = 'Vigente' | 'ProximoAVencer' | 'Vencido';
@@ -87,6 +91,8 @@ export type StockLevelStatus = 'Normal' | 'StockBajo' | 'SinExistencias';
 export interface EntryItem {
   id: string;
   productId: string;
+  productCode: string;
+  productName: string;
   quantity: number;
   batchNumber: string;
   expiryDate: string; // YYYY-MM-DD
@@ -95,12 +101,29 @@ export interface EntryItem {
 export interface EntryRecord {
   id: string;
   documentNumber: string;
-  provider: string;
+  supplierId: string;
+  supplierName: string;
+  provider: string; // Alias histórico de supplierName para compatibilidad
   date: string; // YYYY-MM-DD
   notes?: string;
   registeredBy: string;
+  registeredByUid?: string;
   createdAt: string;
   items: EntryItem[];
+}
+
+export interface EntryInput {
+  documentNumber: string;
+  supplierId: string;
+  supplierName?: string;
+  date: string;
+  notes?: string;
+  items: Array<{
+    productId: string;
+    quantity: number;
+    batchNumber: string;
+    expiryDate: string;
+  }>;
 }
 
 export type ExitReason =

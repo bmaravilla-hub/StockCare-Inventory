@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useEffect, useState } from 'react';
 import type {
   Batch,
-  EntryItem,
+  EntryInput,
   EntryRecord,
   ExitReason,
   ExitRecord,
@@ -15,7 +15,7 @@ import type {
   UserSession,
 } from '../types';
 import { getBatchExpiryStatus, getProductTotalStock } from '../utils/inventory';
-import { isValidFutureOrTodayDate, isValidNotFutureDate } from '../utils/date';
+import { isValidNotFutureDate } from '../utils/date';
 import { isFirebaseConfigured } from './firebase';
 import {
   loginWithEmail as fbLoginEmail,
@@ -28,7 +28,6 @@ import {
 import {
   fetchFirestoreInventory,
   persistBatch,
-  persistEntry,
   persistExit,
   persistMovement,
   persistSettings,
@@ -39,6 +38,9 @@ import {
   subscribeToSuppliers,
   createSupplierFirestore,
   updateSupplierFirestore,
+  subscribeToEntries,
+  subscribeToBatches,
+  registerEntryFirestore,
 } from './firestoreService';
 
 export interface ProductInput {
@@ -51,18 +53,7 @@ export interface ProductInput {
   description?: string;
 }
 
-export interface EntryInput {
-  provider: string;
-  documentNumber: string;
-  date: string;
-  notes?: string;
-  items: Array<{
-    productId: string;
-    quantity: number;
-    batchNumber: string;
-    expiryDate: string;
-  }>;
-}
+export type { EntryInput } from '../types';
 
 export interface ExitInput {
   productId: string;
@@ -81,17 +72,13 @@ export interface ActionResult<T = undefined> {
 }
 
 export interface InventoryState {
-  entries: EntryRecord[];
   exits: ExitRecord[];
-  batches: Batch[];
   movements: MovementRecord[];
   settings: SystemSettings;
 }
 
 const INITIAL_STATE: InventoryState = {
-  entries: [],
   exits: [],
-  batches: [],
   movements: [],
   settings: DEFAULT_SYSTEM_SETTINGS,
 };
@@ -107,8 +94,14 @@ export interface StockCareContextValue {
   isLoadingSuppliers: boolean;
   suppliersError: string | null;
   entries: EntryRecord[];
-  exits: ExitRecord[];
+  isEntriesLoading: boolean;
+  isLoadingEntries: boolean;
+  entriesError: string | null;
   batches: Batch[];
+  isBatchesLoading: boolean;
+  isLoadingBatches: boolean;
+  batchesError: string | null;
+  exits: ExitRecord[];
   movements: MovementRecord[];
   settings: SystemSettings;
   toasts: ToastMessage[];
@@ -128,7 +121,7 @@ export interface StockCareContextValue {
   updateProduct: (id: string, input: ProductInput) => Promise<ActionResult<Product>>;
   createSupplier: (input: SupplierInput) => Promise<ActionResult<Supplier>>;
   updateSupplier: (id: string, input: SupplierInput) => Promise<ActionResult<Supplier>>;
-  registerEntry: (input: EntryInput) => ActionResult<EntryRecord>;
+  registerEntry: (input: EntryInput) => Promise<ActionResult<EntryRecord>>;
   registerExit: (input: ExitInput) => ActionResult<ExitRecord>;
   addToast: (toast: Omit<ToastMessage, 'id'>) => void;
   dismissToast: (id: string) => void;
@@ -147,6 +140,12 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [isSuppliersLoading, setIsSuppliersLoading] = useState(true);
   const [suppliersError, setSuppliersError] = useState<string | null>(null);
+  const [entries, setEntries] = useState<EntryRecord[]>([]);
+  const [isEntriesLoading, setIsEntriesLoading] = useState(true);
+  const [entriesError, setEntriesError] = useState<string | null>(null);
+  const [batches, setBatches] = useState<Batch[]>([]);
+  const [isBatchesLoading, setIsBatchesLoading] = useState(true);
+  const [batchesError, setBatchesError] = useState<string | null>(null);
   const [state, setState] = useState<InventoryState>(INITIAL_STATE);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -223,15 +222,77 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
     return () => unsubscribe();
   }, [session?.id, isAuthReady]);
 
-  // Cargar inventario desde Firestore al iniciar si Firebase está configurado y el usuario está autenticado
+  // Suscribirse en tiempo real al historial de entradas en Cloud Firestore (onSnapshot)
+  useEffect(() => {
+    if (!isFirebaseConfigured || !isAuthReady) {
+      return;
+    }
+
+    if (!session) {
+      setEntries([]);
+      setIsEntriesLoading(false);
+      setEntriesError(null);
+      return;
+    }
+
+    setIsEntriesLoading(true);
+    setEntriesError(null);
+
+    const unsubscribe = subscribeToEntries(
+      (items) => {
+        setEntries(items);
+        setIsEntriesLoading(false);
+        setEntriesError(null);
+      },
+      (err) => {
+        console.error('Error en suscripción de entradas Firestore:', err);
+        setEntriesError('No fue posible sincronizar las entradas con la base de datos.');
+        setIsEntriesLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [session?.id, isAuthReady]);
+
+  // Suscribirse en tiempo real a los lotes en Cloud Firestore (onSnapshot)
+  useEffect(() => {
+    if (!isFirebaseConfigured || !isAuthReady) {
+      return;
+    }
+
+    if (!session) {
+      setBatches([]);
+      setIsBatchesLoading(false);
+      setBatchesError(null);
+      return;
+    }
+
+    setIsBatchesLoading(true);
+    setBatchesError(null);
+
+    const unsubscribe = subscribeToBatches(
+      (items) => {
+        setBatches(items);
+        setIsBatchesLoading(false);
+        setBatchesError(null);
+      },
+      (err) => {
+        console.error('Error en suscripción de lotes Firestore:', err);
+        setBatchesError('No fue posible sincronizar los lotes con la base de datos.');
+        setIsBatchesLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [session?.id, isAuthReady]);
+
+  // Cargar inventario restante (exits, movements, settings) desde Firestore si el usuario está autenticado
   useEffect(() => {
     if (!isFirebaseConfigured || !isAuthReady || !session) return;
     let isMounted = true;
     fetchFirestoreInventory().then((remoteData) => {
       if (isMounted && remoteData) {
         setState({
-          batches: remoteData.batches,
-          entries: remoteData.entries,
           exits: remoteData.exits,
           movements: remoteData.movements,
           settings: remoteData.settings,
@@ -476,151 +537,29 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   const registerEntry = useCallback(
-    (input: EntryInput): ActionResult<EntryRecord> => {
-      if (!input.provider.trim() || !input.documentNumber.trim() || !input.date) {
+    async (input: EntryInput): Promise<ActionResult<EntryRecord>> => {
+      if (!session) {
+        return { ok: false, error: 'Debe iniciar sesión para registrar una entrada de inventario.' };
+      }
+      if (session.role !== 'BODEGA') {
         return {
           ok: false,
-          error: 'Proveedor, número de documento y fecha son obligatorios.',
+          error: 'Rol no autorizado. Solo el personal de BODEGA puede registrar entradas de inventario.',
         };
       }
-      if (!isValidNotFutureDate(input.date)) {
-        return {
-          ok: false,
-          error: 'La fecha de recepción no puede ser posterior al día de hoy.',
-        };
+
+      const res = await registerEntryFirestore(input, session.id, session.fullName);
+      if (res.ok && res.data) {
+        addToast({
+          type: 'success',
+          title: 'Entrada registrada correctamente',
+          message: `Documento ${res.data.documentNumber} (${res.data.items.length} línea/s) guardado en inventario.`,
+        });
+        return { ok: true, data: res.data };
       }
-      if (input.items.length === 0) {
-        return { ok: false, error: 'Debe agregar al menos un producto a la recepción.' };
-      }
-
-      for (let i = 0; i < input.items.length; i++) {
-        const item = input.items[i];
-        if (!item.productId) {
-          return { ok: false, error: `Línea ${i + 1}: Seleccione un producto.` };
-        }
-        if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
-          return {
-            ok: false,
-            error: `Línea ${i + 1}: La cantidad debe ser un número entero mayor que cero.`,
-          };
-        }
-        if (!item.batchNumber.trim()) {
-          return { ok: false, error: `Línea ${i + 1}: Ingrese el número de lote.` };
-        }
-        if (!isValidFutureOrTodayDate(item.expiryDate)) {
-          return {
-            ok: false,
-            error: `Línea ${i + 1}: La fecha de vencimiento es inválida o corresponde a un producto ya vencido.`,
-          };
-        }
-      }
-
-      const now = new Date().toISOString();
-      const entryId = `ent-${Date.now()}`;
-      const userName = session?.fullName ?? 'Personal de Bodega';
-
-      const normalizedItems: EntryItem[] = input.items.map((item, idx) => ({
-        id: `${entryId}-${idx + 1}`,
-        productId: item.productId,
-        quantity: item.quantity,
-        batchNumber: item.batchNumber.trim().toUpperCase(),
-        expiryDate: item.expiryDate,
-      }));
-
-      const newEntry: EntryRecord = {
-        id: entryId,
-        documentNumber: input.documentNumber.trim().toUpperCase(),
-        provider: input.provider.trim(),
-        date: input.date,
-        notes: input.notes?.trim() || undefined,
-        registeredBy: userName,
-        createdAt: now,
-        items: normalizedItems,
-      };
-
-      const nextBatches = [...state.batches];
-      const newMovements: MovementRecord[] = [];
-      const runningStockByProduct = new Map<string, number>();
-
-      for (const prod of products) {
-        runningStockByProduct.set(
-          prod.id,
-          getProductTotalStock(prod.id, nextBatches)
-        );
-      }
-
-      normalizedItems.forEach((item, idx) => {
-        const existingBatchIdx = nextBatches.findIndex(
-          (b) =>
-            b.productId === item.productId &&
-            b.batchNumber.toUpperCase() === item.batchNumber.toUpperCase() &&
-            b.expiryDate === item.expiryDate
-        );
-
-        let affectedBatch: Batch;
-        if (existingBatchIdx >= 0) {
-          const existingBatch = nextBatches[existingBatchIdx];
-          affectedBatch = {
-            ...existingBatch,
-            quantity: existingBatch.quantity + item.quantity,
-            initialQuantity: existingBatch.initialQuantity + item.quantity,
-          };
-          nextBatches[existingBatchIdx] = affectedBatch;
-        } else {
-          affectedBatch = {
-            id: `lot-${item.id}`,
-            productId: item.productId,
-            batchNumber: item.batchNumber,
-            quantity: item.quantity,
-            initialQuantity: item.quantity,
-            expiryDate: item.expiryDate,
-            entryId: newEntry.id,
-            createdAt: now,
-          };
-          nextBatches.push(affectedBatch);
-        }
-
-        persistBatch(affectedBatch);
-
-        const nextStock =
-          (runningStockByProduct.get(item.productId) ?? 0) + item.quantity;
-        runningStockByProduct.set(item.productId, nextStock);
-
-        const movement: MovementRecord = {
-          id: `mov-${newEntry.id}-${idx + 1}`,
-          date: newEntry.date,
-          createdAt: now,
-          productId: item.productId,
-          batchNumber: item.batchNumber,
-          type: 'Entrada',
-          quantity: item.quantity,
-          user: userName,
-          reference: newEntry.documentNumber,
-          detail: `Recepción de ${newEntry.provider}`,
-          resultingStock: nextStock,
-        };
-        newMovements.push(movement);
-        persistMovement(movement);
-      });
-
-      setState((prev) => ({
-        ...prev,
-        entries: [newEntry, ...prev.entries],
-        batches: nextBatches,
-        movements: [...newMovements.reverse(), ...prev.movements],
-      }));
-
-      persistEntry(newEntry);
-
-      addToast({
-        type: 'success',
-        title: 'Entrada registrada correctamente',
-        message: `Documento ${newEntry.documentNumber} (${normalizedItems.length} línea/s) actualizado en inventario.`,
-      });
-
-      return { ok: true, data: newEntry };
+      return { ok: false, error: res.error };
     },
-    [session, state.batches, products, addToast]
+    [session, addToast]
   );
 
   const registerExit = useCallback(
@@ -641,7 +580,7 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
         };
       }
 
-      const batch = state.batches.find(
+      const batch = batches.find(
         (b) => b.id === input.batchId && b.productId === input.productId
       );
       if (!batch || batch.quantity <= 0) {
@@ -668,7 +607,7 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
         };
       }
 
-      const currentTotal = getProductTotalStock(input.productId, state.batches);
+      const currentTotal = getProductTotalStock(input.productId, batches);
       if (input.quantity > currentTotal) {
         return {
           ok: false,
@@ -701,9 +640,6 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
         quantity: batch.quantity - input.quantity,
       };
 
-      const nextBatches = state.batches.map((b) =>
-        b.id === batch.id ? updatedBatch : b
-      );
       const nextStock = currentTotal - input.quantity;
 
       const newMovement: MovementRecord = {
@@ -723,7 +659,6 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
       setState((prev) => ({
         ...prev,
         exits: [newExit, ...prev.exits],
-        batches: nextBatches,
         movements: [newMovement, ...prev.movements],
       }));
 
@@ -739,7 +674,7 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
 
       return { ok: true, data: newExit };
     },
-    [session, state.batches, state.exits.length, state.settings.expiryAlertDays, addToast]
+    [session, batches, state.exits.length, state.settings.expiryAlertDays, addToast]
   );
 
   return (
@@ -754,9 +689,15 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
         isSuppliersLoading,
         isLoadingSuppliers: isSuppliersLoading,
         suppliersError,
-        entries: state.entries,
+        entries,
+        isEntriesLoading,
+        isLoadingEntries: isEntriesLoading,
+        entriesError,
+        batches,
+        isBatchesLoading,
+        isLoadingBatches: isBatchesLoading,
+        batchesError,
         exits: state.exits,
-        batches: state.batches,
         movements: state.movements,
         settings: state.settings,
         toasts,

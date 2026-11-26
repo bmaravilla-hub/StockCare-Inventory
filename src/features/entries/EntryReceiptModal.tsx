@@ -60,7 +60,7 @@ export const EntryReceiptModal: React.FC<EntryReceiptModalProps> = ({
               Proveedor
             </p>
             <p className="mt-1 text-sm font-semibold text-slate-900">
-              {entry.provider}
+              {entry.supplierName || entry.provider}
             </p>
           </div>
           <div className="rounded-lg border border-slate-200 p-3">
@@ -102,14 +102,17 @@ export const EntryReceiptModal: React.FC<EntryReceiptModalProps> = ({
             <tbody className="divide-y divide-slate-100 bg-white">
               {entry.items.map((item) => {
                 const product = products.find((p) => p.id === item.productId);
+                const displayName = item.productName || product?.name || 'Producto';
+                const displayCode = item.productCode || product?.code || '';
+                const displayPresentation = product?.presentation || '';
                 return (
                   <tr key={item.id}>
                     <td className="px-3 py-2.5">
                       <p className="font-semibold text-slate-900">
-                        {product?.name ?? 'Producto'}
+                        {displayName}
                       </p>
                       <p className="text-[11px] text-slate-500">
-                        {product?.code} • {product?.presentation}
+                        {displayCode}{displayPresentation ? ` • ${displayPresentation}` : ''}
                       </p>
                     </td>
                     <td className="px-3 py-2.5 font-mono font-semibold text-slate-700">

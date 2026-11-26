@@ -9,10 +9,14 @@ import {
   where,
   onSnapshot,
   serverTimestamp,
+  runTransaction,
 } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from './firebase';
 import type {
   Batch,
+  BatchExpiryStatus,
+  EntryInput,
+  EntryItem,
   EntryRecord,
   ExitRecord,
   MovementRecord,
@@ -24,6 +28,8 @@ import type {
   SystemSettings,
 } from '../types';
 import type { ActionResult, ProductInput } from './StockCareContext';
+import { getBatchExpiryStatus } from '../utils/inventory';
+import { isValidFutureOrTodayDate, isValidNotFutureDate } from '../utils/date';
 
 export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   pharmacyName: 'Farmacia StockCare',
@@ -566,6 +572,457 @@ export async function updateSupplierFirestore(
       return { ok: false, error: 'El servicio de base de datos no está disponible. Verifique su conexión.' };
     }
     return { ok: false, error: 'No fue posible actualizar el proveedor en la base de datos.' };
+  }
+}
+
+/**
+ * Escucha cambios en tiempo real sobre la colección de entradas mediante onSnapshot().
+ * Ordena descendentemente por fecha de creación (más recientes primero).
+ */
+export function subscribeToEntries(
+  onEntriesChanged: (entries: EntryRecord[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  if (!isFirebaseConfigured) {
+    onEntriesChanged([]);
+    return () => {};
+  }
+
+  const entriesRef = collection(db, 'entries');
+
+  return onSnapshot(
+    entriesRef,
+    (snap) => {
+      const items: EntryRecord[] = snap.docs.map((docSnap) => {
+        const data = docSnap.data();
+        const createdAt = data.createdAt?.toDate
+          ? data.createdAt.toDate().toISOString()
+          : (typeof data.createdAt === 'string' ? data.createdAt : new Date().toISOString());
+
+        const itemsMapped: EntryItem[] = Array.isArray(data.items)
+          ? data.items.map((it: any, idx: number) => ({
+              id: it.id || `${docSnap.id}-${idx + 1}`,
+              productId: it.productId || '',
+              productCode: it.productCode || '',
+              productName: it.productName || '',
+              quantity: typeof it.quantity === 'number' ? it.quantity : 0,
+              batchNumber: it.batchNumber || '',
+              expiryDate: it.expiryDate || '',
+            }))
+          : [];
+
+        const supplierName = data.supplierName || data.provider || '';
+
+        return {
+          id: docSnap.id,
+          documentNumber: data.documentNumber || '',
+          supplierId: data.supplierId || '',
+          supplierName,
+          provider: supplierName,
+          date: data.date || '',
+          notes: data.notes || undefined,
+          registeredBy: data.registeredBy || '',
+          registeredByUid: data.registeredByUid || undefined,
+          createdAt,
+          items: itemsMapped,
+        };
+      });
+
+      // Ordenar descendente por fecha de creación
+      items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+      onEntriesChanged(items);
+    },
+    (err) => {
+      console.error('Error en listener onSnapshot de entradas:', err);
+      if (onError) onError(err);
+    }
+  );
+}
+
+/**
+ * Escucha cambios en tiempo real sobre la colección de lotes mediante onSnapshot().
+ * Ordena ascendentemente por fecha de vencimiento (próximos a vencer primero).
+ */
+export function subscribeToBatches(
+  onBatchesChanged: (batches: Batch[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  if (!isFirebaseConfigured) {
+    onBatchesChanged([]);
+    return () => {};
+  }
+
+  const batchesRef = collection(db, 'batches');
+
+  return onSnapshot(
+    batchesRef,
+    (snap) => {
+      const items: Batch[] = snap.docs.map((docSnap) => {
+        const data = docSnap.data();
+        const createdAt = data.createdAt?.toDate
+          ? data.createdAt.toDate().toISOString()
+          : (typeof data.createdAt === 'string' ? data.createdAt : new Date().toISOString());
+        const updatedAt = data.updatedAt?.toDate
+          ? data.updatedAt.toDate().toISOString()
+          : (typeof data.updatedAt === 'string' ? data.updatedAt : createdAt);
+
+        const expiryDate = data.expiryDate || '';
+        const status = (data.status as BatchExpiryStatus) || getBatchExpiryStatus(expiryDate);
+
+        return {
+          id: docSnap.id,
+          productId: data.productId || '',
+          entryId: data.entryId || '',
+          supplierId: data.supplierId || '',
+          batchNumber: data.batchNumber || '',
+          expiryDate,
+          initialQuantity: typeof data.initialQuantity === 'number' ? data.initialQuantity : 0,
+          quantity: typeof data.quantity === 'number' ? data.quantity : 0,
+          status,
+          createdAt,
+          updatedAt,
+          createdBy: data.createdBy,
+        };
+      });
+
+      // Ordenar por fecha de vencimiento (próximos a vencer primero)
+      items.sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
+
+      onBatchesChanged(items);
+    },
+    (err) => {
+      console.error('Error en listener onSnapshot de lotes:', err);
+      if (onError) onError(err);
+    }
+  );
+}
+
+/**
+ * Verifica si ya existe una entrada con el mismo número de documento para el mismo proveedor.
+ */
+export async function checkEntryDocumentExists(
+  documentNumber: string,
+  supplierId: string
+): Promise<boolean> {
+  if (!isFirebaseConfigured) return false;
+  const cleanDoc = documentNumber.trim().toUpperCase();
+  try {
+    const q = query(
+      collection(db, 'entries'),
+      where('documentNumber', '==', cleanDoc),
+      where('supplierId', '==', supplierId)
+    );
+    const snap = await getDocs(q);
+    return !snap.empty;
+  } catch (err) {
+    console.error('Error al verificar documento de entrada duplicado:', err);
+    return false;
+  }
+}
+
+/**
+ * Busca si existe un lote previo con exactamente el mismo productId, batchNumber y expiryDate.
+ */
+export async function findExistingBatch(
+  productId: string,
+  batchNumber: string,
+  expiryDate: string
+): Promise<{ id: string; ref: any; data: any } | null> {
+  if (!isFirebaseConfigured) return null;
+  const cleanBatchNumber = batchNumber.trim().toUpperCase();
+  try {
+    const q = query(
+      collection(db, 'batches'),
+      where('productId', '==', productId),
+      where('batchNumber', '==', cleanBatchNumber),
+      where('expiryDate', '==', expiryDate)
+    );
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const docSnap = snap.docs[0];
+      return {
+        id: docSnap.id,
+        ref: docSnap.ref,
+        data: docSnap.data(),
+      };
+    }
+    return null;
+  } catch (err) {
+    console.error('Error al buscar lote existente:', err);
+    return null;
+  }
+}
+
+/**
+ * Registra una entrada de inventario de forma estrictamente atómica mediante runTransaction:
+ * 1. Valida los campos de entrada y formato de ítems.
+ * 2. Verifica la no duplicidad del documento para el proveedor dado.
+ * 3. Valida existencia y estado 'Activo' del proveedor.
+ * 4. Ejecuta runTransaction:
+ *    - Lectura previa de todos los productos involucrados (verificando que existan y estén activos).
+ *    - Lectura previa de lotes candidatos con la misma tripleta (productId, batchNumber, expiryDate).
+ *    - Creación del documento entries/{entryId} con snapshot histórico.
+ *    - Creación o actualización (acumulación de cantidad) de batches/{batchId}.
+ *    - Incremento atómico de products.currentStock.
+ *    - Registro de auditoría Kardex en movements/{movementId}.
+ */
+export async function registerEntryFirestore(
+  input: EntryInput,
+  userId: string,
+  userName: string
+): Promise<ActionResult<EntryRecord>> {
+  if (!isFirebaseConfigured) {
+    return { ok: false, error: 'Firebase no está configurado en el archivo .env.' };
+  }
+
+  const cleanDoc = input.documentNumber.trim().toUpperCase();
+  const cleanSupplierId = input.supplierId.trim();
+  const cleanDate = input.date.trim();
+
+  if (!cleanDoc || cleanDoc.length < 2) {
+    return { ok: false, error: 'El número de factura o documento de entrada es obligatorio (mínimo 2 caracteres).' };
+  }
+  if (!cleanSupplierId) {
+    return { ok: false, error: 'Debe seleccionar un proveedor válido del catálogo.' };
+  }
+  if (!cleanDate || !isValidNotFutureDate(cleanDate)) {
+    return { ok: false, error: 'La fecha de recepción no puede ser posterior al día de hoy.' };
+  }
+  if (!Array.isArray(input.items) || input.items.length === 0) {
+    return { ok: false, error: 'Debe agregar al menos un producto a la recepción de inventario.' };
+  }
+
+  // Validar cada ítem
+  for (let i = 0; i < input.items.length; i++) {
+    const item = input.items[i];
+    if (!item.productId) {
+      return { ok: false, error: `Línea ${i + 1}: Debe seleccionar un producto.` };
+    }
+    const qty = Number(item.quantity);
+    if (!Number.isInteger(qty) || qty <= 0) {
+      return { ok: false, error: `Línea ${i + 1}: La cantidad debe ser un número entero mayor que cero.` };
+    }
+    const batchNum = item.batchNumber.trim();
+    if (!batchNum) {
+      return { ok: false, error: `Línea ${i + 1}: El número de lote es obligatorio.` };
+    }
+    if (!item.expiryDate || !isValidFutureOrTodayDate(item.expiryDate)) {
+      return { ok: false, error: `Línea ${i + 1}: La fecha de vencimiento es inválida o corresponde a un producto vencido.` };
+    }
+  }
+
+  try {
+    // 1. Verificar duplicidad de documento / proveedor
+    const isDuplicate = await checkEntryDocumentExists(cleanDoc, cleanSupplierId);
+    if (isDuplicate) {
+      return {
+        ok: false,
+        error: 'Ya existe una entrada registrada con este número de documento para el proveedor seleccionado.',
+      };
+    }
+
+    // 2. Obtener proveedor y validar estado Activo
+    const supplierRef = doc(db, 'suppliers', cleanSupplierId);
+    const supplierSnap = await getDoc(supplierRef);
+    if (!supplierSnap.exists()) {
+      return { ok: false, error: 'El proveedor seleccionado no existe en la base de datos.' };
+    }
+    const supplierData = supplierSnap.data();
+    if (supplierData.status !== 'Activo') {
+      return { ok: false, error: 'El proveedor seleccionado se encuentra inactivo y no admite recepciones de mercadería.' };
+    }
+    const supplierName = supplierData.name || input.supplierName || 'Proveedor';
+
+    // 3. Pre-buscar candidatos de lotes existentes para leer dentro de la transacción
+    const candidateBatchesMap = new Map<string, { id: string; ref: any }>();
+    for (const item of input.items) {
+      const cleanBatch = item.batchNumber.trim().toUpperCase();
+      const key = `${item.productId}_${cleanBatch}_${item.expiryDate}`;
+      if (!candidateBatchesMap.has(key)) {
+        const found = await findExistingBatch(item.productId, cleanBatch, item.expiryDate);
+        if (found) {
+          candidateBatchesMap.set(key, { id: found.id, ref: found.ref });
+        }
+      }
+    }
+
+    // Calcular suma de cantidades agregadas por producto
+    const productQtyMap = new Map<string, number>();
+    for (const item of input.items) {
+      const current = productQtyMap.get(item.productId) || 0;
+      productQtyMap.set(item.productId, current + item.quantity);
+    }
+    const uniqueProductIds = Array.from(productQtyMap.keys());
+
+    // 4. Ejecutar Transacción Atómica
+    const entryRef = doc(collection(db, 'entries'));
+    const nowIso = new Date().toISOString();
+
+    const createdEntry = await runTransaction(db, async (tx) => {
+      // --- FASE DE LECTURAS ---
+      const productDataMap = new Map<string, any>();
+      for (const prodId of uniqueProductIds) {
+        const pRef = doc(db, 'products', prodId);
+        const pSnap = await tx.get(pRef);
+        if (!pSnap.exists()) {
+          throw new Error(`El producto con ID "${prodId}" no existe en el catálogo.`);
+        }
+        const pData = pSnap.data();
+        if (pData.status !== 'Activo') {
+          throw new Error(`El producto "${pData.name}" se encuentra inactivo y no admite ingresos de inventario.`);
+        }
+        productDataMap.set(prodId, pData);
+      }
+
+      const existingBatchDataMap = new Map<string, { id: string; ref: any; data: any }>();
+      for (const [key, candidate] of candidateBatchesMap.entries()) {
+        const bSnap = await tx.get(candidate.ref);
+        if (bSnap.exists()) {
+          existingBatchDataMap.set(key, { id: candidate.id, ref: candidate.ref, data: bSnap.data() });
+        }
+      }
+
+      // --- FASE DE ESCRITURAS ---
+      // 1) Crear documento entries/{entryId}
+      const normalizedItems: EntryItem[] = input.items.map((item, idx) => {
+        const pData = productDataMap.get(item.productId);
+        return {
+          id: `${entryRef.id}-${idx + 1}`,
+          productId: item.productId,
+          productCode: pData?.code || '',
+          productName: pData?.name || '',
+          quantity: item.quantity,
+          batchNumber: item.batchNumber.trim().toUpperCase(),
+          expiryDate: item.expiryDate,
+        };
+      });
+
+      const entryDocData = {
+        documentNumber: cleanDoc,
+        supplierId: cleanSupplierId,
+        supplierName,
+        provider: supplierName,
+        date: cleanDate,
+        notes: input.notes?.trim() || null,
+        registeredBy: userName,
+        registeredByUid: userId,
+        createdAt: serverTimestamp(),
+        items: normalizedItems,
+      };
+
+      tx.set(entryRef, entryDocData);
+
+      // 2) Actualizar o Crear Batches
+      const accumulatedBatchesInTx = new Map<string, { newInitial: number; newQty: number }>();
+
+      for (const item of input.items) {
+        const cleanBatch = item.batchNumber.trim().toUpperCase();
+        const key = `${item.productId}_${cleanBatch}_${item.expiryDate}`;
+        const existingBatch = existingBatchDataMap.get(key);
+
+        if (existingBatch) {
+          const currentAccum = accumulatedBatchesInTx.get(key) || {
+            newInitial: existingBatch.data.initialQuantity || 0,
+            newQty: existingBatch.data.quantity || 0,
+          };
+          const nextInitial = currentAccum.newInitial + item.quantity;
+          const nextQty = currentAccum.newQty + item.quantity;
+          accumulatedBatchesInTx.set(key, { newInitial: nextInitial, newQty: nextQty });
+
+          tx.update(existingBatch.ref, {
+            initialQuantity: nextInitial,
+            quantity: nextQty,
+            status: getBatchExpiryStatus(item.expiryDate),
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          const newBatchRef = doc(collection(db, 'batches'));
+          tx.set(newBatchRef, {
+            productId: item.productId,
+            entryId: entryRef.id,
+            supplierId: cleanSupplierId,
+            batchNumber: cleanBatch,
+            expiryDate: item.expiryDate,
+            initialQuantity: item.quantity,
+            quantity: item.quantity,
+            status: getBatchExpiryStatus(item.expiryDate),
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            createdBy: userId,
+          });
+
+          // Registrar en mapa en caso de que otra línea de la misma entrada tenga el mismo lote
+          existingBatchDataMap.set(key, {
+            id: newBatchRef.id,
+            ref: newBatchRef,
+            data: { initialQuantity: item.quantity, quantity: item.quantity },
+          });
+          accumulatedBatchesInTx.set(key, { newInitial: item.quantity, newQty: item.quantity });
+        }
+      }
+
+      // 3) Incrementar products.currentStock
+      const runningStockMap = new Map<string, number>();
+      for (const [prodId, addedQty] of productQtyMap.entries()) {
+        const pData = productDataMap.get(prodId);
+        const currentStock = typeof pData.currentStock === 'number' ? pData.currentStock : 0;
+        const newStock = currentStock + addedQty;
+        runningStockMap.set(prodId, newStock);
+
+        const pRef = doc(db, 'products', prodId);
+        tx.update(pRef, {
+          currentStock: newStock,
+          updatedAt: serverTimestamp(),
+          updatedBy: userId,
+        });
+      }
+
+      // 4) Registrar movimientos Kardex tipo Entrada
+      for (let idx = 0; idx < input.items.length; idx++) {
+        const item = input.items[idx];
+        const movRef = doc(collection(db, 'movements'));
+        const resultingStock = runningStockMap.get(item.productId) || 0;
+        tx.set(movRef, {
+          date: cleanDate,
+          createdAt: serverTimestamp(),
+          productId: item.productId,
+          batchNumber: item.batchNumber.trim().toUpperCase(),
+          type: 'Entrada',
+          quantity: item.quantity,
+          user: userName,
+          reference: cleanDoc,
+          detail: `Recepción de ${supplierName}`,
+          resultingStock,
+        });
+      }
+
+      return {
+        id: entryRef.id,
+        documentNumber: cleanDoc,
+        supplierId: cleanSupplierId,
+        supplierName,
+        provider: supplierName,
+        date: cleanDate,
+        notes: input.notes?.trim() || undefined,
+        registeredBy: userName,
+        registeredByUid: userId,
+        createdAt: nowIso,
+        items: normalizedItems,
+      };
+    });
+
+    return { ok: true, data: createdEntry };
+  } catch (err: unknown) {
+    console.error('Error al registrar entrada en Firestore:', err);
+    const error = err as { code?: string; message?: string };
+    if (error.code === 'permission-denied') {
+      return { ok: false, error: 'Permiso denegado: no cuenta con autorización para registrar entradas de inventario.' };
+    }
+    if (error.code === 'unavailable' || error.code === 'deadline-exceeded') {
+      return { ok: false, error: 'El servicio de base de datos no está disponible. Verifique su conexión.' };
+    }
+    return { ok: false, error: error.message || 'No fue posible registrar la entrada en la base de datos.' };
   }
 }
 

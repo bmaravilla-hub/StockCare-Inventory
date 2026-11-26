@@ -30,7 +30,7 @@ interface BatchRow {
 }
 
 export const BatchesPage: React.FC = () => {
-  const { session, batches, products, settings } = useStockCare();
+  const { session, batches, isBatchesLoading, batchesError, products, settings } = useStockCare();
   const isBodega = session?.role === 'BODEGA';
 
   const [search, setSearch] = useState('');
@@ -206,8 +206,14 @@ export const BatchesPage: React.FC = () => {
         columns={columns}
         data={rows}
         rowKey={(r) => r.id}
-        emptyTitle="No se encontraron lotes"
-        emptyDescription="Ajuste los filtros para visualizar otros lotes registrados."
+        isLoading={isBatchesLoading}
+        error={batchesError}
+        emptyTitle={search || statusFilter ? 'No se encontraron lotes' : 'No hay lotes registrados.'}
+        emptyDescription={
+          search || statusFilter
+            ? 'Ajuste los filtros para visualizar otros lotes registrados.'
+            : 'No existen lotes con existencias en la base de datos.'
+        }
       />
     </div>
   );
