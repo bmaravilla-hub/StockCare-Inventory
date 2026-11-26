@@ -5,6 +5,7 @@ from flask_cors import CORS  # Para que React pueda conectarse sin bloqueos CORS
 
 from dao.inventory_dao import (
     obtener_inventario,
+    obtener_movimientos,
     registrar_entrada as registrar_entrada_dao,
     registrar_salida as registrar_salida_dao,
     obtener_proximos_vencer,
@@ -84,6 +85,16 @@ def login():
 def get_inventario():
     try:
         return jsonify(obtener_inventario())
+    except ConnectionError as e:
+        return jsonify({"error": str(e)}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/movimientos", methods=["GET"])
+def get_movimientos():
+    try:
+        return jsonify(obtener_movimientos())
     except ConnectionError as e:
         return jsonify({"error": str(e)}), 503
     except Exception as e:
@@ -225,8 +236,17 @@ def post_producto():
         return jsonify({"error": "precio_unitario y stock_minimo deben ser numéricos"}), 400
 
     try:
-        crear_producto(codigo_barra, nombre_producto, descripcion, precio_unitario, stock_minimo)
-        return jsonify({"mensaje": "Producto registrado exitosamente"}), 201
+        id_producto = crear_producto(
+            codigo_barra,
+            nombre_producto,
+            descripcion,
+            precio_unitario,
+            stock_minimo,
+        )
+        return jsonify({
+            "id_producto": id_producto,
+            "mensaje": "Producto registrado exitosamente",
+        }), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

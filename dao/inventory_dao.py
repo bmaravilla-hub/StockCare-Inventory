@@ -25,6 +25,55 @@ def obtener_inventario():
         conexion.close()
 
 
+def obtener_movimientos():
+    """Devuelve el historial de movimientos guardado en SQL Server."""
+    conexion = obtenerConexion()
+    if not conexion:
+        raise ConnectionError("No se pudo conectar a la base de datos")
+
+    cursor = None
+    try:
+        cursor = conexion.cursor()
+        cursor.execute(
+            """
+            SELECT
+                M.id_movimiento,
+                M.id_producto,
+                CONVERT(VARCHAR(10), M.fecha_movimiento, 23) AS fecha,
+                CONVERT(VARCHAR(33), M.fecha_movimiento, 126) AS creado,
+                M.tipo_movimiento,
+                M.cantidad,
+                M.motivo,
+                P.nombre_proveedor,
+                ISNULL(V.stock_total, 0) - ISNULL(
+                    SUM(
+                        CASE
+                            WHEN M.tipo_movimiento = 'ENTRADA' THEN M.cantidad
+                            ELSE -M.cantidad
+                        END
+                    ) OVER (
+                        PARTITION BY M.id_producto
+                        ORDER BY M.fecha_movimiento, M.id_movimiento
+                        ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING
+                    ),
+                    0
+                ) AS stock_resultante
+            FROM Movimientos M
+            LEFT JOIN Proveedores P
+                ON M.id_proveedor = P.id_proveedor
+            LEFT JOIN VW_InventarioActual V
+                ON M.id_producto = V.id_producto
+            ORDER BY M.fecha_movimiento DESC, M.id_movimiento DESC
+            """
+        )
+        columnas = [columna[0] for columna in cursor.description]
+        return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        if cursor is not None:
+            cursor.close()
+        conexion.close()
+
+
 def registrar_entrada(
     id_producto,
     numero_lote,
@@ -341,7 +390,7 @@ def crear_producto(
     descripcion,
     precio_unitario,
     stock_minimo,
-):
+) -> int:
     """Registra un nuevo producto."""
 
     conexion = obtenerConexion()
@@ -355,11 +404,16 @@ def crear_producto(
         cursor.execute(
             """
             INSERT INTO Productos (codigo_barra, nombre_producto, descripcion, precio_unitario, stock_minimo)
+            OUTPUT INSERTED.id_producto
             VALUES (?, ?, ?, ?, ?)
             """,
             (codigo_barra, nombre_producto, descripcion, precio_unitario, stock_minimo),
         )
+        fila = cursor.fetchone()
+        if fila is None:
+            raise RuntimeError("SQL Server no devolvió el ID del producto creado")
         conexion.commit()
+        return int(fila[0])
     except Exception:
         conexion.rollback()
         raise

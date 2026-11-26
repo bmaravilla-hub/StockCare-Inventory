@@ -151,6 +151,7 @@ npm run build
 |---|---|---|
 | `GET` | `/api/inventario` | Stock actual por producto. |
 | `GET` | `/api/lotes` | Lotes registrados. |
+| `GET` | `/api/movimientos` | Historial de entradas y salidas guardado en SQL Server. |
 | `GET` | `/api/vencimientos` | Lotes que vencen en los próximos 90 días. |
 | `GET` | `/api/stock-bajo` | Productos con stock igual o inferior al mínimo. |
 | `POST` | `/api/entradas` | Registra uno o varios lotes de entrada. |

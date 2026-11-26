@@ -76,6 +76,28 @@ export async function obtenerLotes(): Promise<LoteInventario[]> {
   return await respuesta.json();
 }
 
+export interface MovimientoBackend {
+  id_movimiento: number;
+  id_producto: number;
+  fecha: string;
+  creado: string;
+  tipo_movimiento: 'ENTRADA' | 'SALIDA';
+  cantidad: number;
+  motivo: string | null;
+  nombre_proveedor: string | null;
+  stock_resultante: number;
+}
+
+export async function obtenerMovimientos(): Promise<MovimientoBackend[]> {
+  const respuesta = await fetch(`${API_URL}/movimientos`, { headers: headersConToken() });
+
+  if (!respuesta.ok) {
+    throw new Error('No se pudieron consultar los movimientos');
+  }
+
+  return await respuesta.json();
+}
+
 // Consultar vencimientos
 export async function obtenerVencimientos() {
   const respuesta = await fetch(`${API_URL}/vencimientos`, { headers: headersConToken() });
@@ -172,7 +194,7 @@ export async function crearProducto(data: {
   descripcion?: string;
   precio_unitario: number;
   stock_minimo: number;
-}) {
+}): Promise<{ id_producto: number; mensaje: string }> {
   const respuesta = await fetch(`${API_URL}/productos`, {
     method: 'POST',
     headers: headersConToken(),
@@ -183,6 +205,10 @@ export async function crearProducto(data: {
 
   if (!respuesta.ok) {
     throw new Error(resultado.error || 'Error al registrar el producto');
+  }
+
+  if (!Number.isInteger(resultado.id_producto) || resultado.id_producto <= 0) {
+    throw new Error('La API no devolvió un ID válido para el producto registrado');
   }
 
   return resultado;

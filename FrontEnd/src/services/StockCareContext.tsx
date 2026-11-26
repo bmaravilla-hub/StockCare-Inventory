@@ -26,6 +26,7 @@ import { isValidFutureOrTodayDate, isValidNotFutureDate } from '../utils/date';
 import {
   obtenerInventario,
   obtenerLotes,
+  obtenerMovimientos,
   registrarEntrada,
   registrarSalida,
   crearProducto,
@@ -136,9 +137,10 @@ useEffect(() => {
 
   const cargarInventario = async () => {
     try {
-      const [datos, lotes] = await Promise.all([
+      const [datos, lotes, movimientos] = await Promise.all([
         obtenerInventario(),
         obtenerLotes(),
+        obtenerMovimientos(),
       ]);
 
       setState((prev) => ({
@@ -166,6 +168,23 @@ useEffect(() => {
           expiryDate: String(lote.fecha_vencimiento).split('T')[0],
           entryId: '',
           createdAt: new Date().toISOString(),
+        })),
+
+        movements: movimientos.map((movimiento) => ({
+          id: String(movimiento.id_movimiento),
+          date: movimiento.fecha,
+          createdAt: movimiento.creado,
+          productId: String(movimiento.id_producto),
+          batchNumber: 'No asociado',
+          type: movimiento.tipo_movimiento === 'ENTRADA' ? 'Entrada' : 'Salida',
+          quantity: movimiento.cantidad,
+          user: 'No registrado',
+          reference: `MOV-${movimiento.id_movimiento}`,
+          detail:
+            movimiento.tipo_movimiento === 'ENTRADA' && movimiento.nombre_proveedor
+              ? `Recepción de ${movimiento.nombre_proveedor}`
+              : movimiento.motivo ?? 'Movimiento de inventario',
+          resultingStock: movimiento.stock_resultante,
         })),
       }));
     } catch (error) {
@@ -314,14 +333,16 @@ try {
       }
 
       // Enviar el producto al backend para persistirlo en SQL Server
+      let idProducto: number;
       try {
-        await crearProducto({
+        const resultado = await crearProducto({
           codigo_barra: cleanCode,
           nombre_producto: cleanName,
           descripcion: input.description?.trim() || undefined,
           precio_unitario: 0,
           stock_minimo: Math.floor(input.minStock),
         });
+        idProducto = resultado.id_producto;
       } catch (error) {
         return {
           ok: false,
@@ -334,7 +355,7 @@ try {
 
       const now = new Date().toISOString();
       const newProduct: Product = {
-        id: `prod-${Date.now()}`,
+        id: String(idProducto),
         code: cleanCode,
         name: cleanName,
         category: input.category.trim(),
