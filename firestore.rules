@@ -1,0 +1,151 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: {userId} (Firebase Auth UID)
+// Fields:
+//   - uid: string (required, immutable)
+//   - email: string (required)
+//   - fullName: string (required)
+//   - role: string (required, 'ADMIN' | 'BODEGA')
+//   - branch: string (optional)
+//   - createdAt: string / timestamp
+//
+// Collection: products
+// Document ID: {productId}
+// Fields:
+//   - code: string (required, unique identifier)
+//   - name: string (required)
+//   - category: string (required)
+//   - presentation: string (required)
+//   - minStock: number (required, >= 0)
+//   - status: string (required, 'Activo' | 'Inactivo')
+//   - description: string (optional)
+//   - createdAt: string
+//   - updatedAt: string
+//
+// Collection: batches
+// Document ID: {batchId}
+// Fields:
+//   - productId: string (required)
+//   - batchNumber: string (required)
+//   - quantity: number (required, >= 0)
+//   - initialQuantity: number (required, >= 0)
+//   - expiryDate: string (required, YYYY-MM-DD)
+//   - entryId: string (required)
+//   - createdAt: string
+//
+// Collection: entries
+// Document ID: {entryId}
+// Fields:
+//   - documentNumber: string (required)
+//   - provider: string (required)
+//   - date: string (required, YYYY-MM-DD)
+//   - registeredBy: string (required)
+//   - createdAt: string
+//   - items: list (required)
+//   - notes: string (optional)
+//
+// Collection: exits
+// Document ID: {exitId}
+// Fields:
+//   - productId: string (required)
+//   - batchId: string (required)
+//   - batchNumber: string (required)
+//   - quantity: number (required, > 0)
+//   - reason: string (required)
+//   - reference: string (required)
+//   - date: string (required, YYYY-MM-DD)
+//   - registeredBy: string (required)
+//   - createdAt: string
+//   - notes: string (optional)
+//
+// Collection: movements
+// Document ID: {movementId}
+// Fields:
+//   - date: string (required, YYYY-MM-DD)
+//   - createdAt: string (required)
+//   - productId: string (required)
+//   - batchNumber: string (required)
+//   - type: string (required, 'Entrada' | 'Salida')
+//   - quantity: number (required, > 0)
+//   - user: string (required)
+//   - reference: string (required)
+//   - detail: string (required)
+//   - resultingStock: number (required, >= 0)
+//
+// Collection: settings
+// Document ID: system
+// Fields:
+//   - pharmacyName: string
+//   - branchName: string
+//   - branchAddress: string
+//   - phone: string
+//   - expiryAlertDays: number (>= 1)
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if false;
+    }
+
+    match /products/{productId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+
+    match /batches/{batchId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+
+    match /entries/{entryId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /exits/{exitId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /movements/{movementId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /settings/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+  }
+}

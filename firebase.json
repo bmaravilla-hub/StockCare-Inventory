@@ -1,0 +1,19 @@
+{
+  "auth": {
+    "providers": {
+      "emailPassword": true,
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "StockCare",
+        "supportEmail": "maravillacruz806@gmail.com",
+        "authorizedRedirectUris": [
+          "https://stockcare-e000b.firebaseapp.com/__/auth/handler",
+          "http://localhost",
+          "http://127.0.0.1"
+        ]
+      }
+    }
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  }
+}
