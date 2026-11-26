@@ -32,6 +32,8 @@ def _generar_token():
 def verificar_token():
     if not request.path.startswith("/api/"):
         return None
+    if request.method == "OPTIONS":
+        return None
     if request.path == "/api/login":
         return None
     auth = request.headers.get("Authorization", "")

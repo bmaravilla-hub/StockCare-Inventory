@@ -156,7 +156,7 @@ export interface ProductoBackend {
 
 // Consultar productos
 export async function obtenerProductos(): Promise<ProductoBackend[]> {
-  const respuesta = await fetch(`${API_URL}/productos`);
+  const respuesta = await fetch(`${API_URL}/productos`, { headers: headersConToken() });
 
   if (!respuesta.ok) {
     throw new Error('No se pudo consultar los productos');

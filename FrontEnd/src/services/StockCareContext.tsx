@@ -132,6 +132,8 @@ const addToast = useCallback(
 );
 
 useEffect(() => {
+  if (!session) return;
+
   const cargarInventario = async () => {
     try {
       const [datos, lotes] = await Promise.all([
@@ -178,7 +180,7 @@ useEffect(() => {
   };
 
   cargarInventario();
-}, [addToast]);
+}, [session, addToast]);
 
 const login = useCallback(
 async (
