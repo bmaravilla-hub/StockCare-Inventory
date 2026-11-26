@@ -14,6 +14,7 @@ import type {
   MovementType,
   ProductStatus,
   StockLevelStatus,
+  SupplierStatus,
 } from '../types';
 
 export type BadgeTone = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
@@ -114,6 +115,23 @@ export const MovementTypeBadge: React.FC<{ type: MovementType }> = ({ type }) =>
 };
 
 export const ProductStatusBadge: React.FC<{ status: ProductStatus }> = ({
+  status,
+}) => {
+  if (status === 'Activo') {
+    return (
+      <Badge tone="success" icon={<CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />}>
+        Activo
+      </Badge>
+    );
+  }
+  return (
+    <Badge tone="neutral" icon={<Ban className="h-3.5 w-3.5" aria-hidden="true" />}>
+      Inactivo
+    </Badge>
+  );
+};
+
+export const SupplierStatusBadge: React.FC<{ status: SupplierStatus }> = ({
   status,
 }) => {
   if (status === 'Activo') {

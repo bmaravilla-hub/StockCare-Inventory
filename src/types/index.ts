@@ -42,6 +42,33 @@ export interface Product {
   updatedBy?: string;
 }
 
+export type SupplierStatus = 'Activo' | 'Inactivo';
+
+export interface Supplier {
+  id: string;
+  name: string;
+  nit?: string;
+  nrc?: string;
+  phone?: string;
+  email?: string;
+  contactName?: string;
+  status: SupplierStatus;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+  updatedBy?: string;
+}
+
+export interface SupplierInput {
+  name: string;
+  nit?: string;
+  nrc?: string;
+  phone?: string;
+  email?: string;
+  contactName?: string;
+  status: SupplierStatus;
+}
+
 export interface Batch {
   id: string;
   productId: string;

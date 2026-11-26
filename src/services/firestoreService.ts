@@ -18,6 +18,9 @@ import type {
   MovementRecord,
   Product,
   ProductStatus,
+  Supplier,
+  SupplierInput,
+  SupplierStatus,
   SystemSettings,
 } from '../types';
 import type { ActionResult, ProductInput } from './StockCareContext';
@@ -314,6 +317,255 @@ export async function updateProductFirestore(
       return { ok: false, error: 'El servicio de base de datos no está disponible. Verifique su conexión.' };
     }
     return { ok: false, error: 'No fue posible actualizar el producto en la base de datos.' };
+  }
+}
+
+/**
+ * Escucha cambios en tiempo real sobre la colección de proveedores mediante onSnapshot().
+ * Ordena de forma estable los proveedores alfabéticamente por nombre.
+ */
+export function subscribeToSuppliers(
+  onSuppliersChanged: (suppliers: Supplier[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  if (!isFirebaseConfigured) {
+    onSuppliersChanged([]);
+    return () => {};
+  }
+
+  const suppliersRef = collection(db, 'suppliers');
+
+  return onSnapshot(
+    suppliersRef,
+    (snap) => {
+      const items: Supplier[] = snap.docs.map((docSnap) => {
+        const data = docSnap.data();
+        const createdAt = data.createdAt?.toDate
+          ? data.createdAt.toDate().toISOString()
+          : (typeof data.createdAt === 'string' ? data.createdAt : new Date().toISOString());
+        const updatedAt = data.updatedAt?.toDate
+          ? data.updatedAt.toDate().toISOString()
+          : (typeof data.updatedAt === 'string' ? data.updatedAt : createdAt);
+
+        return {
+          id: docSnap.id,
+          name: data.name || '',
+          nit: data.nit || undefined,
+          nrc: data.nrc || undefined,
+          phone: data.phone || undefined,
+          email: data.email || undefined,
+          contactName: data.contactName || undefined,
+          status: (data.status === 'Inactivo' ? 'Inactivo' : 'Activo') as SupplierStatus,
+          createdAt,
+          updatedAt,
+          createdBy: data.createdBy,
+          updatedBy: data.updatedBy,
+        };
+      });
+
+      // Ordenamiento estable alfabético por nombre
+      items.sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+
+      onSuppliersChanged(items);
+    },
+    (err) => {
+      console.error('Error en listener onSnapshot de proveedores:', err);
+      if (onError) onError(err);
+    }
+  );
+}
+
+/**
+ * Verifica si un proveedor con el mismo nombre ya existe en Firestore (comparación normalizada e insensible a mayúsculas).
+ * Si se proporciona excludeSupplierId, se ignora dicho documento (útil durante edición).
+ */
+export async function checkSupplierNameExists(
+  name: string,
+  excludeSupplierId?: string
+): Promise<boolean> {
+  if (!isFirebaseConfigured) return false;
+  const normalized = name.trim().toLowerCase();
+  try {
+    const snap = await getDocs(collection(db, 'suppliers'));
+    return snap.docs.some((docSnap) => {
+      if (excludeSupplierId && docSnap.id === excludeSupplierId) return false;
+      const data = docSnap.data();
+      return (data.name || '').trim().toLowerCase() === normalized;
+    });
+  } catch (err) {
+    console.error('Error al verificar nombre de proveedor:', err);
+    return false;
+  }
+}
+
+/**
+ * Crea un nuevo proveedor en Cloud Firestore con validaciones de campos y auditoría.
+ */
+export async function createSupplierFirestore(
+  input: SupplierInput,
+  userId: string
+): Promise<ActionResult<Supplier>> {
+  if (!isFirebaseConfigured) {
+    return { ok: false, error: 'Firebase no está configurado en el archivo .env.' };
+  }
+
+  const cleanName = input.name.trim();
+  const cleanEmail = input.email?.trim() || '';
+
+  if (!cleanName || cleanName.length < 3) {
+    return { ok: false, error: 'El nombre del proveedor es obligatorio y debe contener al menos 3 caracteres.' };
+  }
+
+  if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return { ok: false, error: 'El formato de correo electrónico no es válido.' };
+  }
+
+  if (input.status !== 'Activo' && input.status !== 'Inactivo') {
+    return { ok: false, error: 'El estado del proveedor debe ser Activo o Inactivo.' };
+  }
+
+  try {
+    const nameExists = await checkSupplierNameExists(cleanName);
+    if (nameExists) {
+      return { ok: false, error: `Ya existe un proveedor registrado con el nombre "${cleanName}".` };
+    }
+
+    const docRef = doc(collection(db, 'suppliers'));
+    const nowIso = new Date().toISOString();
+
+    const firestoreData = {
+      name: cleanName,
+      nit: input.nit?.trim() || null,
+      nrc: input.nrc?.trim() || null,
+      phone: input.phone?.trim() || null,
+      email: cleanEmail || null,
+      contactName: input.contactName?.trim() || null,
+      status: input.status,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      createdBy: userId,
+      updatedBy: userId,
+    };
+
+    await setDoc(docRef, firestoreData);
+
+    const clientSupplier: Supplier = {
+      id: docRef.id,
+      name: cleanName,
+      nit: input.nit?.trim() || undefined,
+      nrc: input.nrc?.trim() || undefined,
+      phone: input.phone?.trim() || undefined,
+      email: cleanEmail || undefined,
+      contactName: input.contactName?.trim() || undefined,
+      status: input.status,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      createdBy: userId,
+      updatedBy: userId,
+    };
+
+    return { ok: true, data: clientSupplier };
+  } catch (err: unknown) {
+    console.error('Error al crear proveedor en Firestore:', err);
+    const error = err as { code?: string; message?: string };
+    if (error.code === 'permission-denied') {
+      return { ok: false, error: 'Permiso denegado: no cuenta con autorización para registrar proveedores.' };
+    }
+    if (error.code === 'unavailable' || error.code === 'deadline-exceeded') {
+      return { ok: false, error: 'El servicio de base de datos no está disponible. Verifique su conexión.' };
+    }
+    return { ok: false, error: 'No fue posible guardar el proveedor en la base de datos.' };
+  }
+}
+
+/**
+ * Actualiza los datos de un proveedor en Firestore sin alterar campos protegidos.
+ */
+export async function updateSupplierFirestore(
+  supplierId: string,
+  input: SupplierInput,
+  userId: string
+): Promise<ActionResult<Supplier>> {
+  if (!isFirebaseConfigured) {
+    return { ok: false, error: 'Firebase no está configurado en el archivo .env.' };
+  }
+
+  const cleanName = input.name.trim();
+  const cleanEmail = input.email?.trim() || '';
+
+  if (!supplierId) {
+    return { ok: false, error: 'Identificador de proveedor inválido.' };
+  }
+  if (!cleanName || cleanName.length < 3) {
+    return { ok: false, error: 'El nombre del proveedor es obligatorio y debe contener al menos 3 caracteres.' };
+  }
+  if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return { ok: false, error: 'El formato de correo electrónico no es válido.' };
+  }
+  if (input.status !== 'Activo' && input.status !== 'Inactivo') {
+    return { ok: false, error: 'El estado del proveedor debe ser Activo o Inactivo.' };
+  }
+
+  try {
+    const docRef = doc(db, 'suppliers', supplierId);
+    const existingSnap = await getDoc(docRef);
+
+    if (!existingSnap.exists()) {
+      return { ok: false, error: 'El proveedor solicitado no existe en la base de datos.' };
+    }
+
+    const existingData = existingSnap.data();
+
+    // Si cambió el nombre, validar que no colisione con otro proveedor
+    if ((existingData.name || '').trim().toLowerCase() !== cleanName.toLowerCase()) {
+      const nameExists = await checkSupplierNameExists(cleanName, supplierId);
+      if (nameExists) {
+        return { ok: false, error: `Otro proveedor ya utiliza el nombre "${cleanName}".` };
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+
+    const updatePayload = {
+      name: cleanName,
+      nit: input.nit?.trim() || null,
+      nrc: input.nrc?.trim() || null,
+      phone: input.phone?.trim() || null,
+      email: cleanEmail || null,
+      contactName: input.contactName?.trim() || null,
+      status: input.status,
+      updatedAt: serverTimestamp(),
+      updatedBy: userId,
+    };
+
+    await updateDoc(docRef, updatePayload);
+
+    const updatedSupplier: Supplier = {
+      id: supplierId,
+      name: cleanName,
+      nit: input.nit?.trim() || undefined,
+      nrc: input.nrc?.trim() || undefined,
+      phone: input.phone?.trim() || undefined,
+      email: cleanEmail || undefined,
+      contactName: input.contactName?.trim() || undefined,
+      status: input.status,
+      createdAt: existingData.createdAt?.toDate ? existingData.createdAt.toDate().toISOString() : nowIso,
+      updatedAt: nowIso,
+      createdBy: existingData.createdBy,
+      updatedBy: userId,
+    };
+
+    return { ok: true, data: updatedSupplier };
+  } catch (err: unknown) {
+    console.error('Error al actualizar proveedor en Firestore:', err);
+    const error = err as { code?: string; message?: string };
+    if (error.code === 'permission-denied') {
+      return { ok: false, error: 'Permiso denegado: no cuenta con autorización para modificar proveedores.' };
+    }
+    if (error.code === 'unavailable' || error.code === 'deadline-exceeded') {
+      return { ok: false, error: 'El servicio de base de datos no está disponible. Verifique su conexión.' };
+    }
+    return { ok: false, error: 'No fue posible actualizar el proveedor en la base de datos.' };
   }
 }
 

@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   LogOut,
   Pill,
+  Truck,
   UserCircle2,
   X,
 } from 'lucide-react';
@@ -72,6 +73,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           label: 'Productos',
           to: '/productos',
           icon: <Pill className="h-4 w-4" />,
+        },
+        {
+          label: 'Proveedores',
+          to: '/proveedores',
+          icon: <Truck className="h-4 w-4" />,
         },
         {
           label: 'Inventario / Existencias',

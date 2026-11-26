@@ -8,6 +8,8 @@ import type {
   MovementRecord,
   Product,
   ProductStatus,
+  Supplier,
+  SupplierInput,
   SystemSettings,
   ToastMessage,
   UserSession,
@@ -34,6 +36,9 @@ import {
   subscribeToProducts,
   createProductFirestore,
   updateProductFirestore,
+  subscribeToSuppliers,
+  createSupplierFirestore,
+  updateSupplierFirestore,
 } from './firestoreService';
 
 export interface ProductInput {
@@ -97,6 +102,10 @@ export interface StockCareContextValue {
   products: Product[];
   isLoadingProducts: boolean;
   productsError: string | null;
+  suppliers: Supplier[];
+  isSuppliersLoading: boolean;
+  isLoadingSuppliers: boolean;
+  suppliersError: string | null;
   entries: EntryRecord[];
   exits: ExitRecord[];
   batches: Batch[];
@@ -117,6 +126,8 @@ export interface StockCareContextValue {
   updateSettings: (next: SystemSettings) => void;
   createProduct: (input: ProductInput) => Promise<ActionResult<Product>>;
   updateProduct: (id: string, input: ProductInput) => Promise<ActionResult<Product>>;
+  createSupplier: (input: SupplierInput) => Promise<ActionResult<Supplier>>;
+  updateSupplier: (id: string, input: SupplierInput) => Promise<ActionResult<Supplier>>;
   registerEntry: (input: EntryInput) => ActionResult<EntryRecord>;
   registerExit: (input: ExitInput) => ActionResult<ExitRecord>;
   addToast: (toast: Omit<ToastMessage, 'id'>) => void;
@@ -133,6 +144,9 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
   const [productsError, setProductsError] = useState<string | null>(null);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [isSuppliersLoading, setIsSuppliersLoading] = useState(true);
+  const [suppliersError, setSuppliersError] = useState<string | null>(null);
   const [state, setState] = useState<InventoryState>(INITIAL_STATE);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -162,6 +176,29 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
         console.error('Error en suscripción de productos Firestore:', err);
         setProductsError('No fue posible sincronizar el catálogo de productos con la base de datos.');
         setIsLoadingProducts(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  // Suscribirse en tiempo real al catálogo de proveedores en Cloud Firestore (onSnapshot)
+  useEffect(() => {
+    if (!isFirebaseConfigured) {
+      setIsSuppliersLoading(false);
+      return;
+    }
+
+    const unsubscribe = subscribeToSuppliers(
+      (items) => {
+        setSuppliers(items);
+        setIsSuppliersLoading(false);
+        setSuppliersError(null);
+      },
+      (err) => {
+        console.error('Error en suscripción de proveedores Firestore:', err);
+        setSuppliersError('No fue posible sincronizar el catálogo de proveedores con la base de datos.');
+        setIsSuppliersLoading(false);
       }
     );
 
@@ -362,6 +399,56 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
           type: 'success',
           title: 'Producto actualizado',
           message: `${res.data.code} — ${res.data.name}`,
+        });
+        return { ok: true, data: res.data };
+      }
+      return { ok: false, error: res.error };
+    },
+    [session, addToast]
+  );
+
+  const createSupplier = useCallback(
+    async (input: SupplierInput): Promise<ActionResult<Supplier>> => {
+      if (!session) {
+        return { ok: false, error: 'Debe iniciar sesión para registrar un proveedor.' };
+      }
+      if (session.role !== 'BODEGA') {
+        return {
+          ok: false,
+          error: 'Rol no autorizado. Solo el personal de BODEGA puede registrar proveedores.',
+        };
+      }
+      const res = await createSupplierFirestore(input, session.id);
+      if (res.ok && res.data) {
+        addToast({
+          type: 'success',
+          title: 'Proveedor registrado',
+          message: `${res.data.name}`,
+        });
+        return { ok: true, data: res.data };
+      }
+      return { ok: false, error: res.error };
+    },
+    [session, addToast]
+  );
+
+  const updateSupplier = useCallback(
+    async (id: string, input: SupplierInput): Promise<ActionResult<Supplier>> => {
+      if (!session) {
+        return { ok: false, error: 'Debe iniciar sesión para actualizar un proveedor.' };
+      }
+      if (session.role !== 'BODEGA') {
+        return {
+          ok: false,
+          error: 'Rol no autorizado. Solo el personal de BODEGA puede actualizar proveedores.',
+        };
+      }
+      const res = await updateSupplierFirestore(id, input, session.id);
+      if (res.ok && res.data) {
+        addToast({
+          type: 'success',
+          title: 'Proveedor actualizado',
+          message: `${res.data.name}`,
         });
         return { ok: true, data: res.data };
       }
@@ -645,6 +732,10 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
         products,
         isLoadingProducts,
         productsError,
+        suppliers,
+        isSuppliersLoading,
+        isLoadingSuppliers: isSuppliersLoading,
+        suppliersError,
         entries: state.entries,
         exits: state.exits,
         batches: state.batches,
@@ -661,6 +752,8 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
         updateSettings,
         createProduct,
         updateProduct,
+        createSupplier,
+        updateSupplier,
         registerEntry,
         registerExit,
         addToast,

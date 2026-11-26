@@ -27,6 +27,21 @@ rules_version = '2';
 //   - createdAt: string
 //   - updatedAt: string
 //
+// Collection: suppliers
+// Document ID: {supplierId}
+// Fields:
+//   - name: string (required, size >= 3)
+//   - nit: string (optional)
+//   - nrc: string (optional)
+//   - phone: string (optional)
+//   - email: string (optional)
+//   - contactName: string (optional)
+//   - status: string (required, 'Activo' | 'Inactivo')
+//   - createdAt: timestamp / string
+//   - updatedAt: timestamp / string
+//   - createdBy: string (required, UID)
+//   - updatedBy: string (required, UID)
+//
 // Collection: batches
 // Document ID: {batchId}
 // Fields:
@@ -162,6 +177,31 @@ service cloud.firestore {
         && request.resource.data.updatedBy == request.auth.uid;
 
       // Prohibido eliminar productos físicamente para preservar integridad referencial e histórica
+      allow delete: if false;
+    }
+
+    match /suppliers/{supplierId} {
+      // Lectura permitida a usuarios autenticados
+      allow read: if isAuthenticated();
+
+      // Creación permitida a usuarios autenticados con validaciones de campos requeridos
+      allow create: if isAuthenticated()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 3
+        && request.resource.data.status in ['Activo', 'Inactivo']
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid;
+
+      // Actualización permitida garantizando inmutabilidad de createdAt y createdBy
+      allow update: if isAuthenticated()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 3
+        && request.resource.data.status in ['Activo', 'Inactivo']
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.updatedBy == request.auth.uid;
+
+      // Prohibido eliminar proveedores físicamente para preservar integridad referencial e histórica
       allow delete: if false;
     }
 

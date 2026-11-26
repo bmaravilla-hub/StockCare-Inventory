@@ -36,7 +36,7 @@ function createEmptyLine(): DraftLine {
 }
 
 export const EntryCreatePage: React.FC = () => {
-  const { products, entries, settings, registerEntry } = useStockCare();
+  const { products, entries, suppliers, settings, registerEntry } = useStockCare();
   const navigate = useNavigate();
 
   const activeProducts = useMemo(
@@ -44,20 +44,23 @@ export const EntryCreatePage: React.FC = () => {
     [products]
   );
 
-  const existingProviders = useMemo(() => {
-    const unique = new Set(
-      entries
-        .map((e) => e.provider)
-        .filter((p) => Boolean(p && p.trim()))
-    );
-    return Array.from(unique).sort();
-  }, [entries]);
+  const activeSuppliers = useMemo(
+    () => suppliers.filter((s) => s.status === 'Activo'),
+    [suppliers]
+  );
 
   const providerOptions = useMemo(() => {
-    const opts = existingProviders.map((p) => ({ value: p, label: p }));
-    opts.push({ value: '__OTHER__', label: '+ Ingresar nuevo proveedor' });
-    return opts;
-  }, [existingProviders]);
+    const list = activeSuppliers.map((s) => ({ value: s.name, label: s.name }));
+    for (const e of entries) {
+      const p = e.provider?.trim();
+      if (p && !list.some((item) => item.value.toLowerCase() === p.toLowerCase())) {
+        list.push({ value: p, label: p });
+      }
+    }
+    list.sort((a, b) => a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }));
+    list.push({ value: '__OTHER__', label: '+ Ingresar nuevo proveedor / texto libre' });
+    return list;
+  }, [activeSuppliers, entries]);
 
   const [provider, setProvider] = useState('');
   const [customProvider, setCustomProvider] = useState('');
@@ -212,7 +215,11 @@ export const EntryCreatePage: React.FC = () => {
             <Select
               label="Proveedor"
               required
-              placeholder={existingProviders.length > 0 ? 'Seleccione un proveedor...' : 'Seleccione o ingrese un proveedor...'}
+              placeholder={
+                activeSuppliers.length > 0 || entries.length > 0
+                  ? 'Seleccione un proveedor...'
+                  : 'Seleccione o ingrese un proveedor...'
+              }
               value={provider}
               onChange={(e) => setProvider(e.target.value)}
               error={provider !== '__OTHER__' ? headerErrors.provider : undefined}

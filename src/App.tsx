@@ -14,6 +14,9 @@ import { ProfilePage } from './pages/ProfilePage';
 import { ProductsListPage } from './pages/ProductsListPage';
 import { ProductCreatePage } from './pages/ProductCreatePage';
 import { ProductEditPage } from './pages/ProductEditPage';
+import { SuppliersListPage } from './pages/SuppliersListPage';
+import { SupplierCreatePage } from './pages/SupplierCreatePage';
+import { SupplierEditPage } from './pages/SupplierEditPage';
 import { EntriesListPage } from './pages/EntriesListPage';
 import { EntryCreatePage } from './pages/EntryCreatePage';
 import { ExitsListPage } from './pages/ExitsListPage';
@@ -47,6 +50,15 @@ export const App: React.FC = () => {
                 <Route
                   path="/productos/:id/editar"
                   element={<ProductEditPage />}
+                />
+              </Route>
+
+              <Route path="/proveedores" element={<SuppliersListPage />} />
+              <Route element={<RoleRoute allowedRoles={['BODEGA']} />}>
+                <Route path="/proveedores/nuevo" element={<SupplierCreatePage />} />
+                <Route
+                  path="/proveedores/:id/editar"
+                  element={<SupplierEditPage />}
                 />
               </Route>
 
