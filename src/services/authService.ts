@@ -54,10 +54,10 @@ export async function createOrUpdateUserProfile(
   const existing = await getUserProfile(user.uid);
   const nowIso = new Date().toISOString();
 
-  const role: UserRole =
-    customData?.role ||
-    existing?.role ||
-    (user.email?.includes('admin') ? 'ADMIN' : 'BODEGA');
+  // El rol proviene exclusivamente del documento en Firestore si ya existe,
+  // o se asigna 'BODEGA' como rol seguro por defecto para usuarios nuevos.
+  // Se elimina cualquier heurística basada en el texto del correo (ej. email.includes('admin')).
+  const role: UserRole = existing?.role || customData?.role || 'BODEGA';
 
   const roleLabel = roleToLabel(role);
   const fullName =
@@ -144,7 +144,7 @@ export async function registerWithEmail(
   email: string,
   pass: string,
   fullName: string,
-  role: UserRole = 'BODEGA'
+  _role: UserRole = 'BODEGA'
 ): Promise<{ ok: boolean; user?: UserSession; error?: string }> {
   if (!isFirebaseConfigured) {
     return {
@@ -157,7 +157,7 @@ export async function registerWithEmail(
     const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
     const session = await createOrUpdateUserProfile(cred.user, {
       fullName,
-      role,
+      role: 'BODEGA',
     });
     return { ok: true, user: session };
   } catch (err: unknown) {

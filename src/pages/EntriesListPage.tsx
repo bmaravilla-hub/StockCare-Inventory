@@ -7,7 +7,6 @@ import { Input } from '../components/Input';
 import { Select } from '../components/Select';
 import { DataTable, type TableColumn } from '../components/DataTable';
 import { EntryReceiptModal } from '../features/entries/EntryReceiptModal';
-import { COMMON_PROVIDERS } from '../data/mockData';
 import { useStockCare } from '../hooks/useStockCare';
 import type { EntryRecord } from '../types';
 import { formatDateDisplay } from '../utils/date';
@@ -21,10 +20,11 @@ export const EntriesListPage: React.FC = () => {
   const [selectedEntry, setSelectedEntry] = useState<EntryRecord | null>(null);
 
   const providers = useMemo(() => {
-    const unique = new Set([
-      ...COMMON_PROVIDERS,
-      ...entries.map((e) => e.provider),
-    ]);
+    const unique = new Set(
+      entries
+        .map((e) => e.provider)
+        .filter((p) => Boolean(p && p.trim()))
+    );
     return Array.from(unique).sort();
   }, [entries]);
 

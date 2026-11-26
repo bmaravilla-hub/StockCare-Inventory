@@ -11,17 +11,6 @@ export interface UserSession {
   lastLogin: string;
 }
 
-export interface DemoAccount {
-  id: string;
-  username: string;
-  fullName: string;
-  email: string;
-  role: UserRole;
-  roleLabel: string;
-  branch: string;
-  description: string;
-}
-
 export interface SystemSettings {
   pharmacyName: string;
   branchName: string;

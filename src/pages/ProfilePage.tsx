@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   Building2,
   CheckCircle2,
-  RotateCcw,
   Save,
   ShieldCheck,
   UserCircle2,
@@ -12,7 +11,6 @@ import { Input } from '../components/Input';
 import { Select } from '../components/Select';
 import { Button } from '../components/Button';
 import { Alert } from '../components/Alert';
-import { ConfirmModal } from '../components/Modal';
 import { useStockCare } from '../hooks/useStockCare';
 import { formatDateTimeDisplay } from '../utils/date';
 
@@ -22,7 +20,6 @@ export const ProfilePage: React.FC = () => {
     settings,
     updateProfile,
     updateSettings,
-    resetDemoData,
   } = useStockCare();
 
   const [fullName, setFullName] = useState(session?.fullName ?? '');
@@ -34,7 +31,6 @@ export const ProfilePage: React.FC = () => {
 
   const [sysForm, setSysForm] = useState(settings);
   const [sysError, setSysError] = useState<string | null>(null);
-  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
 
   if (!session) return null;
 
@@ -265,7 +261,7 @@ export const ProfilePage: React.FC = () => {
             </div>
 
             {isAdmin && (
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <div className="flex flex-wrap items-center justify-start gap-3 pt-2">
                 <Button
                   type="submit"
                   variant="primary"
@@ -273,33 +269,11 @@ export const ProfilePage: React.FC = () => {
                 >
                   Guardar configuración
                 </Button>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  leftIcon={<RotateCcw className="h-4 w-4" />}
-                  onClick={() => setConfirmResetOpen(true)}
-                >
-                  Restablecer datos demo
-                </Button>
               </div>
             )}
           </form>
         </section>
       </div>
-
-      <ConfirmModal
-        isOpen={confirmResetOpen}
-        onClose={() => setConfirmResetOpen(false)}
-        onConfirm={() => {
-          resetDemoData();
-          setConfirmResetOpen(false);
-        }}
-        title="Restablecer datos de demostración"
-        message="Esta acción restaurará el catálogo de productos, lotes, entradas, salidas y movimientos al estado inicial de prueba. ¿Desea continuar?"
-        confirmText="Restablecer datos"
-        variant="danger"
-      />
     </div>
   );
 };

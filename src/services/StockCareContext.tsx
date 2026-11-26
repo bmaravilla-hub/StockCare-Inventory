@@ -13,15 +13,6 @@ import type {
   UserRole,
   UserSession,
 } from '../types';
-import { DEMO_ACCOUNTS } from '../data/mockData';
-import {
-  clearInventoryState,
-  loadInventoryState,
-  loadUserSession,
-  saveInventoryState,
-  saveUserSession,
-  type PersistedInventoryState,
-} from './storageService';
 import { getBatchExpiryStatus, getProductTotalStock } from '../utils/inventory';
 import { isValidFutureOrTodayDate, isValidNotFutureDate } from '../utils/date';
 import { isFirebaseConfigured } from './firebase';
@@ -40,6 +31,7 @@ import {
   persistExit,
   persistMovement,
   persistSettings,
+  DEFAULT_SYSTEM_SETTINGS,
 } from './firestoreService';
 
 export interface ProductInput {
@@ -81,8 +73,27 @@ export interface ActionResult<T = undefined> {
   data?: T;
 }
 
+export interface InventoryState {
+  products: Product[];
+  entries: EntryRecord[];
+  exits: ExitRecord[];
+  batches: Batch[];
+  movements: MovementRecord[];
+  settings: SystemSettings;
+}
+
+const INITIAL_STATE: InventoryState = {
+  products: [],
+  entries: [],
+  exits: [],
+  batches: [],
+  movements: [],
+  settings: DEFAULT_SYSTEM_SETTINGS,
+};
+
 export interface StockCareContextValue {
   session: UserSession | null;
+  isAuthReady: boolean;
   products: Product[];
   entries: EntryRecord[];
   exits: ExitRecord[];
@@ -91,7 +102,7 @@ export interface StockCareContextValue {
   settings: SystemSettings;
   toasts: ToastMessage[];
   isFirebaseConfigured: boolean;
-  login: (username: string, passwordOrRole?: string | UserRole) => Promise<ActionResult<UserSession>>;
+  login: (email: string, pass: string) => Promise<ActionResult<UserSession>>;
   loginWithEmail: (email: string, pass: string) => Promise<ActionResult<UserSession>>;
   registerWithEmail: (
     email: string,
@@ -103,7 +114,6 @@ export interface StockCareContextValue {
   logout: () => void;
   updateProfile: (payload: { fullName: string; email: string }) => void;
   updateSettings: (next: SystemSettings) => void;
-  resetDemoData: () => void;
   createProduct: (input: ProductInput) => ActionResult<Product>;
   updateProduct: (id: string, input: ProductInput) => ActionResult<Product>;
   registerEntry: (input: EntryInput) => ActionResult<EntryRecord>;
@@ -117,26 +127,16 @@ export const StockCareContext = createContext<StockCareContextValue | null>(null
 export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [session, setSession] = useState<UserSession | null>(() => loadUserSession());
-  const [state, setState] = useState<PersistedInventoryState>(() =>
-    loadInventoryState()
-  );
+  const [session, setSession] = useState<UserSession | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [state, setState] = useState<InventoryState>(INITIAL_STATE);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-
-  useEffect(() => {
-    saveInventoryState(state);
-  }, [state]);
-
-  useEffect(() => {
-    saveUserSession(session);
-  }, [session]);
 
   // Suscribirse a cambios de estado de autenticación en Firebase
   useEffect(() => {
     const unsubscribe = subscribeToAuthChanges((firebaseSession) => {
-      if (firebaseSession) {
-        setSession(firebaseSession);
-      }
+      setSession(firebaseSession);
+      setIsAuthReady(true);
     });
     return () => unsubscribe();
   }, []);
@@ -232,62 +232,18 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const login = useCallback(
     async (
-      usernameInput: string,
-      passwordOrRole?: string | UserRole
+      emailInput: string,
+      passwordInput?: string
     ): Promise<ActionResult<UserSession>> => {
-      // Si parece un correo electrónico con clave y Firebase está configurado, intentar autenticación con Firebase
-      if (
-        isFirebaseConfigured &&
-        usernameInput.includes('@') &&
-        passwordOrRole &&
-        !['ADMIN', 'BODEGA'].includes(passwordOrRole)
-      ) {
-        return loginWithEmailAction(usernameInput, passwordOrRole);
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 350));
-      const normalized = usernameInput.trim().toLowerCase();
-      const roleOverride =
-        passwordOrRole === 'ADMIN' || passwordOrRole === 'BODEGA'
-          ? passwordOrRole
-          : undefined;
-
-      const account = roleOverride
-        ? DEMO_ACCOUNTS.find((a) => a.role === roleOverride)
-        : DEMO_ACCOUNTS.find(
-            (a) =>
-              a.username.toLowerCase() === normalized ||
-              a.email.toLowerCase() === normalized
-          );
-
-      if (!account) {
+      if (!passwordInput || !emailInput.trim()) {
         return {
           ok: false,
-          error:
-            'Usuario no reconocido. Utilice "admin" o "bodega", o inicie sesión con Firebase / Google.',
+          error: 'Ingrese correo electrónico y contraseña válidos.',
         };
       }
-
-      const newSession: UserSession = {
-        id: account.id,
-        username: account.username,
-        fullName: account.fullName,
-        email: account.email,
-        role: account.role,
-        roleLabel: account.roleLabel,
-        branch: account.branch,
-        lastLogin: new Date().toISOString(),
-      };
-
-      setSession(newSession);
-      addToast({
-        type: 'success',
-        title: `Bienvenido, ${newSession.fullName}`,
-        message: `Sesión iniciada como ${newSession.roleLabel}.`,
-      });
-      return { ok: true, data: newSession };
+      return loginWithEmailAction(emailInput.trim(), passwordInput);
     },
-    [addToast, loginWithEmailAction]
+    [loginWithEmailAction]
   );
 
   const logout = useCallback(() => {
@@ -335,16 +291,6 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
     },
     [addToast]
   );
-
-  const resetDemoData = useCallback(() => {
-    const fresh = clearInventoryState();
-    setState(fresh);
-    addToast({
-      type: 'info',
-      title: 'Datos restablecidos',
-      message: 'Se restauró el conjunto inicial de datos de prueba.',
-    });
-  }, [addToast]);
 
   const createProduct = useCallback(
     (input: ProductInput): ActionResult<Product> => {
@@ -719,6 +665,7 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
     <StockCareContext.Provider
       value={{
         session,
+        isAuthReady,
         products: state.products,
         entries: state.entries,
         exits: state.exits,
@@ -734,7 +681,6 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
         logout,
         updateProfile,
         updateSettings,
-        resetDemoData,
         createProduct,
         updateProduct,
         registerEntry,

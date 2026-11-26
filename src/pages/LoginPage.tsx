@@ -1,21 +1,17 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { KeyRound, Lock, Mail, ShieldCheck, User, Warehouse } from 'lucide-react';
+import { KeyRound, Lock, Mail, ShieldCheck, User } from 'lucide-react';
 import { StockCareLogo } from '../components/StockCareLogo';
 import { Input } from '../components/Input';
 import { Button } from '../components/Button';
 import { Alert } from '../components/Alert';
-import { DEMO_ACCOUNTS } from '../data/mockData';
 import { useStockCare } from '../hooks/useStockCare';
-import type { UserRole } from '../types';
 
 export const LoginPage: React.FC = () => {
   const {
-    login,
     loginWithEmail,
     registerWithEmail,
     loginWithGoogle,
-    isFirebaseConfigured,
   } = useStockCare();
 
   const navigate = useNavigate();
@@ -26,7 +22,6 @@ export const LoginPage: React.FC = () => {
   const [emailOrUser, setEmailOrUser] = useState('');
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
-  const [selectedRole, setSelectedRole] = useState<UserRole>('BODEGA');
 
   const [fieldErrors, setFieldErrors] = useState<{
     emailOrUser?: string;
@@ -43,7 +38,9 @@ export const LoginPage: React.FC = () => {
 
     const errors: { emailOrUser?: string; fullName?: string; password?: string } = {};
     if (!emailOrUser.trim()) {
-      errors.emailOrUser = mode === 'register' ? 'Ingrese su correo electrónico.' : 'Ingrese su usuario o correo.';
+      errors.emailOrUser = 'Ingrese su correo electrónico.';
+    } else if (!emailOrUser.includes('@')) {
+      errors.emailOrUser = 'Ingrese un correo electrónico válido.';
     }
     if (mode === 'register' && !fullName.trim()) {
       errors.fullName = 'Ingrese su nombre completo.';
@@ -66,20 +63,13 @@ export const LoginPage: React.FC = () => {
 
     try {
       if (mode === 'register') {
-        const result = await registerWithEmail(emailOrUser, password, fullName, selectedRole);
+        const result = await registerWithEmail(emailOrUser.trim(), password, fullName.trim());
         if (!result.ok) {
           setAuthError(result.error ?? 'No fue posible registrar la cuenta.');
           return;
         }
       } else {
-        // Si contiene @ y hay Firebase configurado, intentar login directo con email y contraseña
-        let result;
-        if (emailOrUser.includes('@') && isFirebaseConfigured) {
-          result = await loginWithEmail(emailOrUser, password);
-        } else {
-          result = await login(emailOrUser, password);
-        }
-
+        const result = await loginWithEmail(emailOrUser.trim(), password);
         if (!result.ok) {
           setAuthError(result.error ?? 'No fue posible iniciar sesión.');
           return;
@@ -105,17 +95,6 @@ export const LoginPage: React.FC = () => {
       navigate(from, { replace: true });
     } finally {
       setIsGoogleSubmitting(false);
-    }
-  };
-
-  const handleQuickDemoLogin = async (role: UserRole) => {
-    setAuthError(null);
-    setFieldErrors({});
-    setIsSubmitting(true);
-    const result = await login('', role);
-    setIsSubmitting(false);
-    if (result.ok) {
-      navigate(from, { replace: true });
     }
   };
 
@@ -255,15 +234,15 @@ export const LoginPage: React.FC = () => {
             )}
 
             <Input
-              label={mode === 'register' ? 'Correo electrónico' : 'Usuario o correo'}
+              label="Correo electrónico"
               required
-              type={mode === 'register' ? 'email' : 'text'}
-              placeholder={mode === 'register' ? 'usuario@stockcare.com' : 'Ej. admin@stockcare.com o admin'}
+              type="email"
+              placeholder="usuario@stockcare.com"
               value={emailOrUser}
               onChange={(e) => setEmailOrUser(e.target.value)}
               error={fieldErrors.emailOrUser}
               leftIcon={<Mail className="h-4 w-4" />}
-              autoComplete="username"
+              autoComplete="email"
             />
 
             <Input
@@ -278,40 +257,6 @@ export const LoginPage: React.FC = () => {
               autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
             />
 
-            {mode === 'register' && (
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Rol en farmacia
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedRole('BODEGA')}
-                    className={`flex items-center gap-2 rounded-lg border p-2.5 text-xs font-medium transition-colors ${
-                      selectedRole === 'BODEGA'
-                        ? 'border-teal-600 bg-teal-50 text-teal-900 font-semibold'
-                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Warehouse className="h-4 w-4 text-teal-700" />
-                    <span>Bodega</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedRole('ADMIN')}
-                    className={`flex items-center gap-2 rounded-lg border p-2.5 text-xs font-medium transition-colors ${
-                      selectedRole === 'ADMIN'
-                        ? 'border-teal-600 bg-teal-50 text-teal-900 font-semibold'
-                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    <ShieldCheck className="h-4 w-4 text-teal-700" />
-                    <span>Administrador</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
             <Button
               type="submit"
               variant="primary"
@@ -322,35 +267,6 @@ export const LoginPage: React.FC = () => {
               {mode === 'register' ? 'Crear cuenta' : 'Iniciar sesión'}
             </Button>
           </form>
-
-          <div className="mt-6 border-t border-slate-200 pt-5">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2.5">
-              Acceso rápido por perfil demo (Prototipo)
-            </p>
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              {DEMO_ACCOUNTS.map((acc) => (
-                <button
-                  key={acc.id}
-                  type="button"
-                  disabled={isSubmitting || isGoogleSubmitting}
-                  onClick={() => handleQuickDemoLogin(acc.role)}
-                  className="flex flex-col items-start rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-left hover:border-teal-400 hover:bg-teal-50/40 transition-colors disabled:opacity-50"
-                >
-                  <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
-                    {acc.role === 'ADMIN' ? (
-                      <ShieldCheck className="h-4 w-4 text-teal-700" />
-                    ) : (
-                      <Warehouse className="h-4 w-4 text-teal-700" />
-                    )}
-                    <span>{acc.roleLabel}</span>
-                  </div>
-                  <p className="mt-0.5 text-[11px] text-slate-500">
-                    Usuario: <code className="font-semibold text-slate-700">{acc.username}</code>
-                  </p>
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
     </div>

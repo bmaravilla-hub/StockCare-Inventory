@@ -4,7 +4,6 @@ import {
   getDocs,
   getDoc,
   setDoc,
-  writeBatch,
 } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from './firebase';
 import type {
@@ -15,13 +14,14 @@ import type {
   Product,
   SystemSettings,
 } from '../types';
-import {
-  INITIAL_ENTRIES,
-  INITIAL_EXITS,
-  INITIAL_PRODUCTS,
-  INITIAL_SETTINGS,
-  buildInitialInventoryState,
-} from '../data/mockData';
+
+export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
+  pharmacyName: 'Farmacia StockCare',
+  branchName: 'Sucursal Central - Farmacia StockCare',
+  branchAddress: 'Calle Plan del Pino km 1.5, Soyapango, San Salvador',
+  phone: '+503 2251-8200',
+  expiryAlertDays: 60,
+};
 
 export async function fetchFirestoreInventory(): Promise<{
   products: Product[];
@@ -41,12 +41,7 @@ export async function fetchFirestoreInventory(): Promise<{
     const movementsSnap = await getDocs(collection(db, 'movements'));
     const settingsSnap = await getDoc(doc(db, 'settings', 'system'));
 
-    // Si la base de datos está completamente vacía, podemos sembrar los datos iniciales
-    if (productsSnap.empty && batchesSnap.empty) {
-      await seedFirestoreData();
-      return fetchFirestoreInventory();
-    }
-
+    // Si Firestore no tiene datos, devolver colecciones vacías reales sin auto-sembrado de mocks
     const products = productsSnap.docs.map((d) => d.data() as Product);
     const batches = batchesSnap.docs.map((d) => d.data() as Batch);
     const entries = entriesSnap.docs.map((d) => d.data() as EntryRecord);
@@ -54,7 +49,7 @@ export async function fetchFirestoreInventory(): Promise<{
     const movements = movementsSnap.docs.map((d) => d.data() as MovementRecord);
     const settings = settingsSnap.exists()
       ? (settingsSnap.data() as SystemSettings)
-      : INITIAL_SETTINGS;
+      : DEFAULT_SYSTEM_SETTINGS;
 
     return {
       products,
@@ -67,41 +62,6 @@ export async function fetchFirestoreInventory(): Promise<{
   } catch (error) {
     console.warn('Error reading data from Firestore:', error);
     return null;
-  }
-}
-
-export async function seedFirestoreData(): Promise<void> {
-  if (!isFirebaseConfigured) return;
-
-  try {
-    const { batches, movements } = buildInitialInventoryState();
-    const batch = writeBatch(db);
-
-    INITIAL_PRODUCTS.forEach((p) => {
-      batch.set(doc(db, 'products', p.id), p);
-    });
-
-    batches.forEach((b) => {
-      batch.set(doc(db, 'batches', b.id), b);
-    });
-
-    INITIAL_ENTRIES.forEach((e) => {
-      batch.set(doc(db, 'entries', e.id), e);
-    });
-
-    INITIAL_EXITS.forEach((ex) => {
-      batch.set(doc(db, 'exits', ex.id), ex);
-    });
-
-    movements.forEach((m) => {
-      batch.set(doc(db, 'movements', m.id), m);
-    });
-
-    batch.set(doc(db, 'settings', 'system'), INITIAL_SETTINGS);
-
-    await batch.commit();
-  } catch (err) {
-    console.warn('Error seeding initial Firestore data:', err);
   }
 }
 

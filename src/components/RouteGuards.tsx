@@ -6,8 +6,19 @@ import type { UserRole } from '../types';
 import { Button } from './Button';
 
 export const ProtectedRoute: React.FC = () => {
-  const { session } = useStockCare();
+  const { session, isAuthReady } = useStockCare();
   const location = useLocation();
+
+  if (!isAuthReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-teal-600 border-t-transparent" />
+          <span className="text-sm font-medium text-slate-500">Verificando sesión...</span>
+        </div>
+      </div>
+    );
+  }
 
   if (!session) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
@@ -17,7 +28,18 @@ export const ProtectedRoute: React.FC = () => {
 };
 
 export const PublicOnlyRoute: React.FC = () => {
-  const { session } = useStockCare();
+  const { session, isAuthReady } = useStockCare();
+
+  if (!isAuthReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-teal-600 border-t-transparent" />
+          <span className="text-sm font-medium text-slate-500">Verificando sesión...</span>
+        </div>
+      </div>
+    );
+  }
 
   if (session) {
     return <Navigate to="/dashboard" replace />;

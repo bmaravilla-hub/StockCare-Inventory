@@ -7,7 +7,6 @@ import { Select } from '../components/Select';
 import { Button } from '../components/Button';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
-import { COMMON_PROVIDERS } from '../data/mockData';
 import { useStockCare } from '../hooks/useStockCare';
 import {
   formatDateDisplay,
@@ -37,13 +36,28 @@ function createEmptyLine(): DraftLine {
 }
 
 export const EntryCreatePage: React.FC = () => {
-  const { products, settings, registerEntry } = useStockCare();
+  const { products, entries, settings, registerEntry } = useStockCare();
   const navigate = useNavigate();
 
   const activeProducts = useMemo(
     () => products.filter((p) => p.status === 'Activo'),
     [products]
   );
+
+  const existingProviders = useMemo(() => {
+    const unique = new Set(
+      entries
+        .map((e) => e.provider)
+        .filter((p) => Boolean(p && p.trim()))
+    );
+    return Array.from(unique).sort();
+  }, [entries]);
+
+  const providerOptions = useMemo(() => {
+    const opts = existingProviders.map((p) => ({ value: p, label: p }));
+    opts.push({ value: '__OTHER__', label: '+ Ingresar nuevo proveedor' });
+    return opts;
+  }, [existingProviders]);
 
   const [provider, setProvider] = useState('');
   const [customProvider, setCustomProvider] = useState('');
@@ -198,14 +212,11 @@ export const EntryCreatePage: React.FC = () => {
             <Select
               label="Proveedor"
               required
-              placeholder="Seleccione un proveedor..."
+              placeholder={existingProviders.length > 0 ? 'Seleccione un proveedor...' : 'Seleccione o ingrese un proveedor...'}
               value={provider}
               onChange={(e) => setProvider(e.target.value)}
               error={provider !== '__OTHER__' ? headerErrors.provider : undefined}
-              options={[
-                ...COMMON_PROVIDERS.map((p) => ({ value: p, label: p })),
-                { value: '__OTHER__', label: 'Otro proveedor (especificar)' },
-              ]}
+              options={providerOptions}
             />
 
             <Input
