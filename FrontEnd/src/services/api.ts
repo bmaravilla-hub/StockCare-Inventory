@@ -1,5 +1,41 @@
 const API_URL = 'http://localhost:5000/api';
 
+const TOKEN_KEY = 'stockcare_token';
+
+export const obtenerToken = (): string | null => {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+};
+
+const headersConToken = (): Record<string, string> => {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const token = obtenerToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+};
+
+export async function login({ username, password }: { username: string; password: string }) {
+  const respuesta = await fetch(`${API_URL}/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+
+  const resultado = await respuesta.json();
+
+  if (!respuesta.ok) {
+    throw new Error(resultado.error || 'Error al iniciar sesión');
+  }
+
+  localStorage.setItem(TOKEN_KEY, resultado.token);
+  return resultado;
+}
+
 // Tipos de datos
 export interface ProductoInventario {
   id_producto: number;
@@ -20,7 +56,7 @@ export interface LoteInventario {
 
 // Consultar inventario
 export async function obtenerInventario(): Promise<ProductoInventario[]> {
-  const respuesta = await fetch(`${API_URL}/inventario`);
+  const respuesta = await fetch(`${API_URL}/inventario`, { headers: headersConToken() });
 
   if (!respuesta.ok) {
     throw new Error('No se pudo consultar el inventario');
@@ -31,7 +67,7 @@ export async function obtenerInventario(): Promise<ProductoInventario[]> {
 
 // Consultar lotes
 export async function obtenerLotes(): Promise<LoteInventario[]> {
-  const respuesta = await fetch(`${API_URL}/lotes`);
+  const respuesta = await fetch(`${API_URL}/lotes`, { headers: headersConToken() });
 
   if (!respuesta.ok) {
     throw new Error('No se pudieron consultar los lotes');
@@ -42,7 +78,7 @@ export async function obtenerLotes(): Promise<LoteInventario[]> {
 
 // Consultar vencimientos
 export async function obtenerVencimientos() {
-  const respuesta = await fetch(`${API_URL}/vencimientos`);
+  const respuesta = await fetch(`${API_URL}/vencimientos`, { headers: headersConToken() });
 
   if (!respuesta.ok) {
     throw new Error('No se pudieron consultar los vencimientos');
@@ -53,7 +89,7 @@ export async function obtenerVencimientos() {
 
 // Consultar stock bajo
 export async function obtenerStockBajo() {
-  const respuesta = await fetch(`${API_URL}/stock-bajo`);
+  const respuesta = await fetch(`${API_URL}/stock-bajo`, { headers: headersConToken() });
 
   if (!respuesta.ok) {
     throw new Error('No se pudo consultar el stock bajo');
@@ -74,9 +110,7 @@ export async function registrarEntrada(data: {
 }) {
   const respuesta = await fetch(`${API_URL}/entradas`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: headersConToken(),
     body: JSON.stringify(data),
   });
 
@@ -97,9 +131,7 @@ export async function registrarSalida(data: {
 }) {
   const respuesta = await fetch(`${API_URL}/salidas`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: headersConToken(),
     body: JSON.stringify(data),
   });
 
@@ -107,6 +139,76 @@ export async function registrarSalida(data: {
 
   if (!respuesta.ok) {
     throw new Error(resultado.error || 'No se pudo registrar la salida');
+  }
+
+  return resultado;
+}
+
+// Tipos de productos devueltos por el backend
+export interface ProductoBackend {
+  id_producto: number;
+  codigo_barra: string;
+  nombre_producto: string;
+  descripcion?: string | null;
+  precio_unitario: number;
+  stock_minimo: number;
+}
+
+// Consultar productos
+export async function obtenerProductos(): Promise<ProductoBackend[]> {
+  const respuesta = await fetch(`${API_URL}/productos`);
+
+  if (!respuesta.ok) {
+    throw new Error('No se pudo consultar los productos');
+  }
+
+  return await respuesta.json();
+}
+
+// Registrar producto
+export async function crearProducto(data: {
+  codigo_barra: string;
+  nombre_producto: string;
+  descripcion?: string;
+  precio_unitario: number;
+  stock_minimo: number;
+}) {
+  const respuesta = await fetch(`${API_URL}/productos`, {
+    method: 'POST',
+    headers: headersConToken(),
+    body: JSON.stringify(data),
+  });
+
+  const resultado = await respuesta.json();
+
+  if (!respuesta.ok) {
+    throw new Error(resultado.error || 'Error al registrar el producto');
+  }
+
+  return resultado;
+}
+
+// Actualizar producto
+export async function actualizarProducto(
+  id: number,
+  data: {
+    codigo_barra: string;
+    nombre_producto: string;
+    descripcion?: string;
+    precio_unitario: number;
+    stock_minimo: number;
+  }
+) {
+  const respuesta = await fetch(`${API_URL}/productos/${id}`, {
+    method: 'PUT',
+    headers: headersConToken(),
+    body: JSON.stringify(data),
+  });
+
+  const resultado = await respuesta.json();
+
+  if (!respuesta.ok) {
+    throw new Error(resultado.error || 'Error al actualizar el producto');
   }
 
   return resultado;

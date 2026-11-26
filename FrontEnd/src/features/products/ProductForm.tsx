@@ -12,7 +12,7 @@ import type { ProductInput } from '../../services/StockCareContext';
 interface ProductFormProps {
   mode: 'create' | 'edit';
   initialValues?: ProductInput;
-  onSubmit: (values: ProductInput) => { ok: boolean; error?: string };
+  onSubmit: (values: ProductInput) => Promise<{ ok: boolean; error?: string }>;
   onCancel: () => void;
 }
 
@@ -98,13 +98,13 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     setConfirmOpen(true);
   };
 
-  const handleConfirmedSave = () => {
+  const handleConfirmedSave = async () => {
     const validated = validate();
     if (!validated) {
       setConfirmOpen(false);
       return;
     }
-    const result = onSubmit(validated);
+    const result = await onSubmit(validated);
     setConfirmOpen(false);
     if (!result.ok) {
       setSubmitError(result.error ?? 'No se pudo guardar el producto.');

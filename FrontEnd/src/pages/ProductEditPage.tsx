@@ -58,8 +58,8 @@ export const ProductEditPage: React.FC = () => {
           status: product.status,
           description: product.description,
         }}
-        onSubmit={(values) => {
-          const res = updateProduct(product.id, values);
+        onSubmit={async (values) => {
+          const res = await updateProduct(product.id, values);
           if (res.ok) {
             navigate('/productos');
           }

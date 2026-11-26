@@ -301,3 +301,105 @@ def obtener_lotes():
         if cursor is not None:
             cursor.close()
         conexion.close()
+
+
+def obtener_productos():
+    """Devuelve los productos registrados en la base de datos."""
+
+    conexion = obtenerConexion()
+    if not conexion:
+        raise ConnectionError("No se pudo conectar a la base de datos")
+
+    cursor = None
+
+    try:
+        cursor = conexion.cursor()
+        cursor.execute(
+            """
+            SELECT
+                id_producto,
+                codigo_barra,
+                nombre_producto,
+                descripcion,
+                precio_unitario,
+                stock_minimo
+            FROM Productos
+            """
+        )
+        columnas = [columna[0] for columna in cursor.description]
+        return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+        conexion.close()
+
+
+def crear_producto(
+    codigo_barra,
+    nombre_producto,
+    descripcion,
+    precio_unitario,
+    stock_minimo,
+):
+    """Registra un nuevo producto."""
+
+    conexion = obtenerConexion()
+    if not conexion:
+        raise ConnectionError("No se pudo conectar a la base de datos")
+
+    cursor = None
+
+    try:
+        cursor = conexion.cursor()
+        cursor.execute(
+            """
+            INSERT INTO Productos (codigo_barra, nombre_producto, descripcion, precio_unitario, stock_minimo)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (codigo_barra, nombre_producto, descripcion, precio_unitario, stock_minimo),
+        )
+        conexion.commit()
+    except Exception:
+        conexion.rollback()
+        raise
+    finally:
+        if cursor is not None:
+            cursor.close()
+        conexion.close()
+
+
+def actualizar_producto(
+    id_producto,
+    codigo_barra,
+    nombre_producto,
+    descripcion,
+    precio_unitario,
+    stock_minimo,
+):
+    """Actualiza un producto existente."""
+
+    conexion = obtenerConexion()
+    if not conexion:
+        raise ConnectionError("No se pudo conectar a la base de datos")
+
+    cursor = None
+
+    try:
+        cursor = conexion.cursor()
+        cursor.execute(
+            """
+            UPDATE Productos
+            SET codigo_barra = ?, nombre_producto = ?, descripcion = ?, precio_unitario = ?, stock_minimo = ?
+            WHERE id_producto = ?
+            """,
+            (codigo_barra, nombre_producto, descripcion, precio_unitario, stock_minimo, id_producto),
+        )
+        conexion.commit()
+    except Exception:
+        conexion.rollback()
+        raise
+    finally:
+        if cursor is not None:
+            cursor.close()
+        conexion.close()

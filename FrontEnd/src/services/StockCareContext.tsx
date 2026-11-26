@@ -10,7 +10,6 @@ import type {
   ProductStatus,
   SystemSettings,
   ToastMessage,
-  UserRole,
   UserSession,
 } from '../types';
 import { DEMO_ACCOUNTS } from '../data/mockData';
@@ -28,6 +27,10 @@ import {
   obtenerInventario,
   obtenerLotes,
   registrarEntrada,
+  registrarSalida,
+  crearProducto,
+  actualizarProducto,
+  login as iniciarSesion,
 } from './api';
 
 export interface ProductInput {
@@ -42,6 +45,7 @@ export interface ProductInput {
 
 export interface EntryInput {
   provider: string;
+  providerId?: string;
   documentNumber: string;
   date: string;
   notes?: string;
@@ -78,15 +82,15 @@ export interface StockCareContextValue {
   movements: MovementRecord[];
   settings: SystemSettings;
   toasts: ToastMessage[];
-  login: (username: string, roleOverride?: UserRole) => Promise<ActionResult<UserSession>>;
+  login: (username: string, password: string) => Promise<ActionResult<UserSession>>;
   logout: () => void;
   updateProfile: (payload: { fullName: string; email: string }) => void;
   updateSettings: (next: SystemSettings) => void;
   resetDemoData: () => void;
-  createProduct: (input: ProductInput) => ActionResult<Product>;
-  updateProduct: (id: string, input: ProductInput) => ActionResult<Product>;
+  createProduct: (input: ProductInput) => Promise<ActionResult<Product>>;
+  updateProduct: (id: string, input: ProductInput) => Promise<ActionResult<Product>>;
   registerEntry: (input: EntryInput) => Promise<ActionResult<EntryRecord>>;
-  registerExit: (input: ExitInput) => ActionResult<ExitRecord>;
+  registerExit: (input: ExitInput) => Promise<ActionResult<ExitRecord>>;
   addToast: (toast: Omit<ToastMessage, 'id'>) => void;
   dismissToast: (id: string) => void;
 }
@@ -179,48 +183,57 @@ useEffect(() => {
 const login = useCallback(
 async (
 usernameInput: string,
-roleOverride?: UserRole
+password: string
 ): Promise<ActionResult<UserSession>> => {
-await new Promise((resolve) => setTimeout(resolve, 350));
-const normalized = usernameInput.trim().toLowerCase();
+try {
+  const resultado = await iniciarSesion({
+    username: usernameInput.trim().toLowerCase(),
+    password,
+  });
 
-const account = roleOverride
-  ? DEMO_ACCOUNTS.find((a) => a.role === roleOverride)
-  : DEMO_ACCOUNTS.find(
-      (a) =>
-        a.username.toLowerCase() === normalized ||
-        a.email.toLowerCase() === normalized
-    );
+  const user = resultado.user;
+  const account = DEMO_ACCOUNTS.find((a) => a.username === user.username);
 
-if (!account) {
+  if (!account) {
+    return {
+      ok: false,
+      error: 'Usuario no reconocido.',
+    };
+  }
+
+  const newSession: UserSession = {
+    id: account.id,
+    username: account.username,
+    fullName: account.fullName,
+    email: account.email,
+    role: user.role,
+    roleLabel:
+      user.role === 'ADMIN'
+        ? 'Administrador'
+        : 'Encargado de Bodega / Dependiente',
+    branch: account.branch,
+    lastLogin: new Date().toISOString(),
+  };
+
+  setSession(newSession);
+  addToast({
+    type: 'success',
+    title: `Bienvenido, ${newSession.fullName}`,
+    message: `Sesión iniciada como ${newSession.roleLabel}.`,
+  });
+
+  return { ok: true, data: newSession };
+} catch (error) {
   return {
     ok: false,
     error:
-      'Usuario no reconocido. Utilice "admin" o "bodega", o seleccione un acceso rápido.',
+      error instanceof Error
+        ? error.message
+        : 'No se pudo iniciar sesión.',
   };
 }
-
-const newSession: UserSession = {
-  id: account.id,
-  username: account.username,
-  fullName: account.fullName,
-  email: account.email,
-  role: account.role,
-  roleLabel: account.roleLabel,
-  branch: account.branch,
-  lastLogin: new Date().toISOString(),
-};
-
-setSession(newSession);
-addToast({
-  type: 'success',
-  title: `Bienvenido, ${newSession.fullName}`,
-  message: `Sesión iniciada como ${newSession.roleLabel}.`,
-});
-
-return { ok: true, data: newSession };
-
 },
+
 [addToast]
 );
 
@@ -279,7 +292,7 @@ return { ok: true, data: newSession };
   }, [addToast]);
 
   const createProduct = useCallback(
-    (input: ProductInput): ActionResult<Product> => {
+    async (input: ProductInput): Promise<ActionResult<Product>> => {
       const cleanCode = input.code.trim().toUpperCase();
       const cleanName = input.name.trim();
       if (!cleanCode || !cleanName || !input.category.trim() || !input.presentation.trim()) {
@@ -295,6 +308,25 @@ return { ok: true, data: newSession };
         return {
           ok: false,
           error: `Ya existe un producto registrado con el código ${cleanCode}.`,
+        };
+      }
+
+      // Enviar el producto al backend para persistirlo en SQL Server
+      try {
+        await crearProducto({
+          codigo_barra: cleanCode,
+          nombre_producto: cleanName,
+          descripcion: input.description?.trim() || undefined,
+          precio_unitario: 0,
+          stock_minimo: Math.floor(input.minStock),
+        });
+      } catch (error) {
+        return {
+          ok: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : 'No se pudo registrar el producto en la base de datos.',
         };
       }
 
@@ -329,7 +361,7 @@ return { ok: true, data: newSession };
   );
 
   const updateProduct = useCallback(
-    (id: string, input: ProductInput): ActionResult<Product> => {
+    async (id: string, input: ProductInput): Promise<ActionResult<Product>> => {
       const existing = state.products.find((p) => p.id === id);
       if (!existing) {
         return { ok: false, error: 'El producto solicitado no existe.' };
@@ -346,6 +378,28 @@ return { ok: true, data: newSession };
       }
       if (input.minStock < 0 || !Number.isFinite(input.minStock)) {
         return { ok: false, error: 'El stock mínimo no puede ser negativo.' };
+      }
+
+      // Enviar la actualización al backend para persistirla en SQL Server
+      const numericId = Number(id);
+      if (Number.isInteger(numericId) && numericId > 0) {
+        try {
+          await actualizarProducto(numericId, {
+            codigo_barra: cleanCode,
+            nombre_producto: input.name.trim(),
+            descripcion: input.description?.trim() || undefined,
+            precio_unitario: 0,
+            stock_minimo: Math.floor(input.minStock),
+          });
+        } catch (error) {
+          return {
+            ok: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : 'No se pudo actualizar el producto en la base de datos.',
+          };
+        }
       }
 
       const updated: Product = {
@@ -428,6 +482,7 @@ return { ok: true, data: newSession };
     // Enviar todos los productos a SQL Server
     try {
       await registrarEntrada({
+        id_proveedor: input.providerId && /^\d+$/.test(input.providerId) ? Number(input.providerId) : undefined,
         items: input.items.map((item) => ({
           id_producto: Number(item.productId),
           numero_lote: item.batchNumber.trim().toUpperCase(),
@@ -549,7 +604,7 @@ return { ok: true, data: newSession };
     );
 
   const registerExit = useCallback(
-    (input: ExitInput): ActionResult<ExitRecord> => {
+    async (input: ExitInput): Promise<ActionResult<ExitRecord>> => {
       if (!input.productId || !input.batchId || !input.reason || !input.date) {
         return { ok: false, error: 'Complete todos los campos obligatorios de la salida.' };
       }
@@ -598,6 +653,23 @@ return { ok: true, data: newSession };
         return {
           ok: false,
           error: 'La cantidad solicitada supera la existencia total del producto.',
+        };
+      }
+
+      // Enviar la salida al backend para registrarla en SQL Server
+      try {
+        await registrarSalida({
+          id_producto: Number(input.productId),
+          cantidad: input.quantity,
+          motivo: input.reason,
+        });
+      } catch (error) {
+        return {
+          ok: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : 'No se pudo registrar la salida en la base de datos.',
         };
       }
 

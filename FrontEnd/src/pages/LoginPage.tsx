@@ -45,7 +45,7 @@ export const LoginPage: React.FC = () => {
 
     setFieldErrors({});
     setIsSubmitting(true);
-    const result = await login(username);
+    const result = await login(username, password);
     setIsSubmitting(false);
 
     if (!result.ok) {
@@ -60,7 +60,10 @@ export const LoginPage: React.FC = () => {
     setAuthError(null);
     setFieldErrors({});
     setIsSubmitting(true);
-    const result = await login('', role);
+    const result = await login(
+      role === 'ADMIN' ? 'admin' : 'bodega',
+      role === 'ADMIN' ? 'admin123' : 'bodega123'
+    );
     setIsSubmitting(false);
     if (result.ok) {
       navigate(from, { replace: true });

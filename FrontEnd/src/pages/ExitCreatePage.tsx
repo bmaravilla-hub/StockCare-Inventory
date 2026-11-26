@@ -133,8 +133,8 @@ export const ExitCreatePage: React.FC = () => {
     setConfirmOpen(true);
   };
 
-  const handleConfirmedSave = () => {
-    const res = registerExit({
+  const handleConfirmedSave = async () => {
+    const res = await registerExit({
       productId,
       batchId,
       quantity: Number(quantity),

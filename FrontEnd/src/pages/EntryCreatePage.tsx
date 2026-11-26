@@ -46,6 +46,7 @@ export const EntryCreatePage: React.FC = () => {
   );
 
   const [provider, setProvider] = useState('');
+  const [providerId, setProviderId] = useState('');
   const [customProvider, setCustomProvider] = useState('');
   const [documentNumber, setDocumentNumber] = useState('');
   const [date, setDate] = useState(getTodayLocalISO());
@@ -140,6 +141,7 @@ export const EntryCreatePage: React.FC = () => {
   const handleConfirmRegister = async () => {
     const res = await registerEntry({
     provider: effectiveProvider,
+    providerId,
     documentNumber: documentNumber.trim(),
     date,
     notes: notes.trim() || undefined,
@@ -202,7 +204,7 @@ export const EntryCreatePage: React.FC = () => {
               required
               placeholder="Seleccione un proveedor..."
               value={provider}
-              onChange={(e) => setProvider(e.target.value)}
+              onChange={(e) => { setProvider(e.target.value); setProviderId(e.target.value); }}
               error={provider !== '__OTHER__' ? headerErrors.provider : undefined}
               options={[
                 ...COMMON_PROVIDERS.map((p) => ({ value: p, label: p })),

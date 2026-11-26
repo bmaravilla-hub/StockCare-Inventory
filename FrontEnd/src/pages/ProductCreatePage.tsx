@@ -23,8 +23,8 @@ export const ProductCreatePage: React.FC = () => {
 
       <ProductForm
         mode="create"
-        onSubmit={(values) => {
-          const res = createProduct(values);
+        onSubmit={async (values) => {
+          const res = await createProduct(values);
           if (res.ok) {
             navigate('/productos');
           }
