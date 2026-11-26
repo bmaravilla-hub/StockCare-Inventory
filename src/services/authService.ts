@@ -6,7 +6,6 @@ import {
   getRedirectResult,
   signOut,
   onAuthStateChanged,
-  type User,
 } from 'firebase/auth';
 import {
   doc,
@@ -15,7 +14,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { auth, db, googleProvider, isFirebaseConfigured } from './firebase';
-import type { UserRole, UserSession } from '../types';
+import type { UserRole, UserSession, UserStatus } from '../types';
 
 export interface UserProfileData {
   uid: string;
@@ -24,7 +23,9 @@ export interface UserProfileData {
   role: UserRole;
   roleLabel: string;
   branch: string;
+  status: UserStatus;
   createdAt?: unknown;
+  updatedAt?: unknown;
   lastLogin?: unknown;
 }
 
@@ -42,72 +43,34 @@ export async function getUserProfile(uid: string): Promise<UserProfileData | nul
     }
     return null;
   } catch (error) {
-    console.warn('Error fetching user profile from Firestore:', error);
+    console.error('Error fetching user profile from Firestore:', error);
     return null;
   }
 }
 
-export async function createOrUpdateUserProfile(
-  user: User,
-  customData?: { fullName?: string; role?: UserRole; branch?: string }
-): Promise<UserSession> {
-  const existing = await getUserProfile(user.uid);
-  const nowIso = new Date().toISOString();
-
-  // El rol proviene exclusivamente del documento en Firestore si ya existe,
-  // o se asigna 'BODEGA' como rol seguro por defecto para usuarios nuevos.
-  // Se elimina cualquier heurística basada en el texto del correo (ej. email.includes('admin')).
-  const role: UserRole = existing?.role || customData?.role || 'BODEGA';
-
-  const roleLabel = roleToLabel(role);
-  const fullName =
-    customData?.fullName ||
-    existing?.fullName ||
-    user.displayName ||
-    user.email?.split('@')[0] ||
-    'Usuario';
-
-  const branch =
-    customData?.branch ||
-    existing?.branch ||
-    'Sucursal Central - Farmacia StockCare';
-
-  const profileData: UserProfileData = {
-    uid: user.uid,
-    email: user.email || '',
-    fullName,
-    role,
-    roleLabel,
-    branch,
-  };
-
-  if (isFirebaseConfigured) {
-    try {
-      const userRef = doc(db, 'users', user.uid);
-      await setDoc(
-        userRef,
-        {
-          ...profileData,
-          lastLogin: serverTimestamp(),
-          createdAt: existing?.createdAt || serverTimestamp(),
-        },
-        { merge: true }
-      );
-    } catch (err) {
-      console.warn('Could not save user profile to Firestore:', err);
-    }
+export async function updateUserProfile(
+  uid: string,
+  data: { fullName: string; branch?: string }
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isFirebaseConfigured) {
+    return { ok: false, error: 'Firebase no está configurado en el archivo .env.' };
   }
-
-  return {
-    id: user.uid,
-    username: user.email ? user.email.split('@')[0] : user.uid.slice(0, 8),
-    fullName,
-    email: user.email || '',
-    role,
-    roleLabel,
-    branch,
-    lastLogin: nowIso,
-  };
+  try {
+    const userRef = doc(db, 'users', uid);
+    await setDoc(
+      userRef,
+      {
+        fullName: data.fullName.trim(),
+        branch: data.branch?.trim() || 'Sucursal Central - Farmacia StockCare',
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return { ok: true };
+  } catch (err) {
+    console.error('Error actualizando perfil en Firestore:', err);
+    return { ok: false, error: 'No fue posible guardar los cambios de su perfil.' };
+  }
 }
 
 export async function loginWithEmail(
@@ -117,24 +80,84 @@ export async function loginWithEmail(
   if (!isFirebaseConfigured) {
     return {
       ok: false,
-      error:
-        'Firebase no está completamente configurado en el archivo .env. Ingrese las variables de entorno de Firebase.',
+      error: 'Firebase no está configurado en el archivo .env.',
     };
   }
 
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanPass = pass.trim();
+
+  if (!cleanEmail || !cleanPass) {
+    return { ok: false, error: 'Ingrese correo electrónico y contraseña.' };
+  }
+
   try {
-    const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
-    const session = await createOrUpdateUserProfile(cred.user);
+    const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
+    const profile = await getUserProfile(cred.user.uid);
+
+    // Validación QA-07: Usuario sin documento users/{uid}
+    if (!profile) {
+      await signOut(auth);
+      return {
+        ok: false,
+        error: 'Su cuenta no se encuentra registrada en la base de datos de StockCare. Contacte al administrador.',
+      };
+    }
+
+    // Validación QA-08: Usuario inactivo
+    if (profile.status === 'Inactivo') {
+      await signOut(auth);
+      return {
+        ok: false,
+        error: 'Su usuario se encuentra inactivo. Contacte al administrador.',
+      };
+    }
+
+    // Actualizar última fecha de acceso y updatedAt
+    try {
+      await setDoc(
+        doc(db, 'users', cred.user.uid),
+        {
+          lastLogin: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      console.warn('No se pudo actualizar lastLogin en Firestore:', err);
+    }
+
+    const session: UserSession = {
+      id: profile.uid,
+      username: profile.email ? profile.email.split('@')[0] : profile.uid.slice(0, 8),
+      fullName: profile.fullName,
+      email: profile.email,
+      role: profile.role,
+      roleLabel: profile.roleLabel || roleToLabel(profile.role),
+      branch: profile.branch || 'Sucursal Central - Farmacia StockCare',
+      status: profile.status,
+      lastLogin: new Date().toISOString(),
+    };
+
     return { ok: true, user: session };
   } catch (err: unknown) {
     const error = err as { code?: string; message?: string };
+    console.error('Error en loginWithEmail:', error.code, error.message);
     let msg = 'Error al iniciar sesión con correo y contraseña.';
-    if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+    if (
+      error.code === 'auth/invalid-credential' ||
+      error.code === 'auth/user-not-found' ||
+      error.code === 'auth/wrong-password'
+    ) {
       msg = 'Credenciales inválidas. Compruebe el correo y la contraseña ingresados.';
     } else if (error.code === 'auth/invalid-email') {
       msg = 'El formato del correo electrónico es inválido.';
     } else if (error.code === 'auth/too-many-requests') {
       msg = 'Demasiados intentos fallidos. Intente de nuevo más tarde.';
+    } else if (error.code === 'auth/user-disabled') {
+      msg = 'Esta cuenta de usuario ha sido inhabilitada por seguridad.';
+    } else if (error.code === 'auth/network-request-failed') {
+      msg = 'Error de conexión. Compruebe su conexión a internet.';
     }
     return { ok: false, error: msg };
   }
@@ -143,25 +166,65 @@ export async function loginWithEmail(
 export async function registerWithEmail(
   email: string,
   pass: string,
-  fullName: string,
-  _role: UserRole = 'BODEGA'
+  fullName: string
 ): Promise<{ ok: boolean; user?: UserSession; error?: string }> {
   if (!isFirebaseConfigured) {
     return {
       ok: false,
-      error: 'Firebase no está completamente configurado en el archivo .env.',
+      error: 'Firebase no está configurado en el archivo .env.',
     };
   }
 
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanPass = pass.trim();
+  const cleanName = fullName.trim();
+
+  if (!cleanEmail || !cleanPass || !cleanName) {
+    return { ok: false, error: 'Complete todos los campos obligatorios.' };
+  }
+
+  if (cleanPass.length < 6) {
+    return { ok: false, error: 'La contraseña debe tener al menos 6 caracteres.' };
+  }
+
   try {
-    const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
-    const session = await createOrUpdateUserProfile(cred.user, {
-      fullName,
+    const cred = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPass);
+    const nowIso = new Date().toISOString();
+
+    const profileData: UserProfileData = {
+      uid: cred.user.uid,
+      email: cred.user.email || cleanEmail,
+      fullName: cleanName,
       role: 'BODEGA',
+      roleLabel: roleToLabel('BODEGA'),
+      branch: 'Sucursal Central - Farmacia StockCare',
+      status: 'Activo',
+    };
+
+    const userRef = doc(db, 'users', cred.user.uid);
+    await setDoc(userRef, {
+      ...profileData,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      lastLogin: serverTimestamp(),
     });
+
+    const session: UserSession = {
+      id: cred.user.uid,
+      username: cleanEmail.split('@')[0],
+      fullName: cleanName,
+      email: cleanEmail,
+      role: 'BODEGA',
+      roleLabel: roleToLabel('BODEGA'),
+      branch: 'Sucursal Central - Farmacia StockCare',
+      status: 'Activo',
+      lastLogin: nowIso,
+    };
+
     return { ok: true, user: session };
   } catch (err: unknown) {
     const error = err as { code?: string; message?: string };
+    console.error('Error en registerWithEmail:', error.code, error.message);
     let msg = 'Error al registrar la cuenta.';
     if (error.code === 'auth/email-already-in-use') {
       msg = 'El correo electrónico ya se encuentra registrado.';
@@ -169,6 +232,8 @@ export async function registerWithEmail(
       msg = 'La contraseña debe tener al menos 6 caracteres.';
     } else if (error.code === 'auth/invalid-email') {
       msg = 'El correo electrónico no tiene un formato válido.';
+    } else if (error.code === 'auth/network-request-failed') {
+      msg = 'Error de conexión de red con Firebase. Compruebe su conexión.';
     }
     return { ok: false, error: msg };
   }
@@ -188,32 +253,107 @@ export async function loginWithGoogle(): Promise<{
 
   try {
     const result = await signInWithPopup(auth, googleProvider);
-    const session = await createOrUpdateUserProfile(result.user);
-    return { ok: true, user: session };
+    const existing = await getUserProfile(result.user.uid);
+    const nowIso = new Date().toISOString();
+
+    if (existing) {
+      if (existing.status === 'Inactivo') {
+        await signOut(auth);
+        return {
+          ok: false,
+          error: 'Su usuario se encuentra inactivo. Contacte al administrador.',
+        };
+      }
+
+      try {
+        await setDoc(
+          doc(db, 'users', result.user.uid),
+          {
+            lastLogin: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        console.warn('No se pudo actualizar lastLogin de Google user:', err);
+      }
+
+      return {
+        ok: true,
+        user: {
+          id: existing.uid,
+          username: existing.email ? existing.email.split('@')[0] : existing.uid.slice(0, 8),
+          fullName: existing.fullName,
+          email: existing.email,
+          role: existing.role,
+          roleLabel: existing.roleLabel || roleToLabel(existing.role),
+          branch: existing.branch || 'Sucursal Central - Farmacia StockCare',
+          status: existing.status,
+          lastLogin: nowIso,
+        },
+      };
+    }
+
+    // Nuevo usuario con Google: aprovisionar perfil seguro en Firestore con rol BODEGA
+    const fullName =
+      result.user.displayName ||
+      result.user.email?.split('@')[0] ||
+      'Usuario Google';
+    const email = result.user.email || '';
+
+    const profileData: UserProfileData = {
+      uid: result.user.uid,
+      email,
+      fullName,
+      role: 'BODEGA',
+      roleLabel: roleToLabel('BODEGA'),
+      branch: 'Sucursal Central - Farmacia StockCare',
+      status: 'Activo',
+    };
+
+    const userRef = doc(db, 'users', result.user.uid);
+    await setDoc(userRef, {
+      ...profileData,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      lastLogin: serverTimestamp(),
+    });
+
+    return {
+      ok: true,
+      user: {
+        id: result.user.uid,
+        username: email ? email.split('@')[0] : result.user.uid.slice(0, 8),
+        fullName,
+        email,
+        role: 'BODEGA',
+        roleLabel: roleToLabel('BODEGA'),
+        branch: 'Sucursal Central - Farmacia StockCare',
+        status: 'Activo',
+        lastLogin: nowIso,
+      },
+    };
   } catch (err: unknown) {
     console.error('Error detallado en Google Sign-In:', err);
     const error = err as { code?: string; message?: string };
     const code = error.code || 'desconocido';
-    let msg = error.message || 'No se pudo completar el inicio de sesión con Google.';
+    let msg = 'No se pudo completar el inicio de sesión con Google.';
 
     if (code === 'auth/popup-closed-by-user') {
       msg = 'Se cerró la ventana emergente de Google antes de completar el inicio de sesión.';
     } else if (code === 'auth/unauthorized-domain') {
-      msg =
-        `Dominio no autorizado para OAuth en Firebase (${window.location.hostname}). Acceda mediante http://localhost:5173 o agregue "${window.location.hostname}" en Firebase Console > Authentication > Settings > Authorized Domains.`;
+      msg = `Dominio no autorizado para OAuth en Firebase (${window.location.hostname}). Acceda mediante http://localhost:5173 o configure el dominio en Firebase Console.`;
     } else if (code === 'auth/popup-blocked') {
-      msg =
-        'La ventana emergente de Google fue bloqueada por el navegador. Habilite las ventanas emergentes para este sitio.';
+      msg = 'La ventana emergente de Google fue bloqueada por el navegador. Habilite las ventanas emergentes.';
     } else if (code === 'auth/cancelled-popup-request') {
       msg = 'Ya hay una ventana emergente de autenticación en curso.';
     } else if (code === 'auth/network-request-failed') {
-      msg = 'Fallo de conexión de red al conectar con los servidores de Google Firebase.';
+      msg = 'Fallo de conexión de red al conectar con los servidores de Google.';
     } else if (code === 'auth/operation-not-allowed') {
-      msg =
-        'El proveedor de Google no está habilitado en la consola de Firebase Authentication.';
+      msg = 'El proveedor de Google no está habilitado en Firebase Authentication.';
     }
 
-    return { ok: false, error: `${msg} [Código: ${code}]` };
+    return { ok: false, error: msg };
   }
 }
 
@@ -230,8 +370,8 @@ export async function logoutUser(): Promise<void> {
   if (isFirebaseConfigured) {
     try {
       await signOut(auth);
-    } catch {
-      // Ignorar errores de signOut
+    } catch (err) {
+      console.warn('Error en signOut:', err);
     }
   }
 }
@@ -247,8 +387,20 @@ export function subscribeToAuthChanges(
   getRedirectResult(auth)
     .then(async (result) => {
       if (result?.user) {
-        const session = await createOrUpdateUserProfile(result.user);
-        onUserChanged(session);
+        const existing = await getUserProfile(result.user.uid);
+        if (existing) {
+          onUserChanged({
+            id: existing.uid,
+            username: existing.email ? existing.email.split('@')[0] : existing.uid.slice(0, 8),
+            fullName: existing.fullName,
+            email: existing.email,
+            role: existing.role,
+            roleLabel: existing.roleLabel || roleToLabel(existing.role),
+            branch: existing.branch || 'Sucursal Central - Farmacia StockCare',
+            status: existing.status,
+            lastLogin: new Date().toISOString(),
+          });
+        }
       }
     })
     .catch((err) => {
@@ -257,8 +409,36 @@ export function subscribeToAuthChanges(
 
   return onAuthStateChanged(auth, async (firebaseUser) => {
     if (firebaseUser) {
-      const session = await createOrUpdateUserProfile(firebaseUser);
-      onUserChanged(session);
+      const existing = await getUserProfile(firebaseUser.uid);
+      if (!existing) {
+        // Usuario en Firebase Auth pero sin perfil en Firestore (QA-07)
+        onUserChanged({
+          id: firebaseUser.uid,
+          username: firebaseUser.email ? firebaseUser.email.split('@')[0] : firebaseUser.uid.slice(0, 8),
+          fullName: firebaseUser.displayName || 'Usuario no registrado',
+          email: firebaseUser.email || '',
+          role: 'BODEGA',
+          roleLabel: 'Encargado de Bodega',
+          branch: 'Sin sucursal',
+          status: 'Inactivo',
+          lastLogin: new Date().toISOString(),
+          isUnprovisioned: true,
+        });
+        return;
+      }
+
+      onUserChanged({
+        id: existing.uid,
+        username: existing.email ? existing.email.split('@')[0] : existing.uid.slice(0, 8),
+        fullName: existing.fullName,
+        email: existing.email,
+        role: existing.role,
+        roleLabel: existing.roleLabel || roleToLabel(existing.role),
+        branch: existing.branch || 'Sucursal Central - Farmacia StockCare',
+        status: existing.status || 'Activo',
+        lastLogin: new Date().toISOString(),
+        isUnprovisioned: false,
+      });
     } else {
       onUserChanged(null);
     }

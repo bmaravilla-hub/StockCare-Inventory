@@ -6,7 +6,7 @@ import type { UserRole } from '../types';
 import { Button } from './Button';
 
 export const ProtectedRoute: React.FC = () => {
-  const { session, isAuthReady } = useStockCare();
+  const { session, isAuthReady, logout } = useStockCare();
   const location = useLocation();
 
   if (!isAuthReady) {
@@ -22,6 +22,60 @@ export const ProtectedRoute: React.FC = () => {
 
   if (!session) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+  }
+
+  // Validación QA-07: Usuario sin perfil en Firestore
+  if (session.isUnprovisioned) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+        <div className="w-full max-w-md rounded-2xl border border-rose-200 bg-white p-8 text-center shadow-xs">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-rose-100 text-rose-700">
+            <ShieldAlert className="h-7 w-7" />
+          </div>
+          <p className="mt-4 text-xs font-bold uppercase tracking-wider text-rose-700">
+            Acceso Restringido • Cuenta no Registrada
+          </p>
+          <h1 className="mt-1 text-xl font-bold text-slate-900">
+            Usuario sin perfil en Firestore
+          </h1>
+          <p className="mt-2 text-sm text-slate-600 leading-relaxed">
+            Su cuenta no se encuentra registrada en la base de datos de StockCare. Contacte al administrador del sistema para habilitar su acceso.
+          </p>
+          <div className="mt-6">
+            <Button variant="outline" onClick={logout} className="w-full">
+              Cerrar sesión
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Validación QA-08: Usuario con status === 'Inactivo'
+  if (session.status === 'Inactivo') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+        <div className="w-full max-w-md rounded-2xl border border-rose-200 bg-white p-8 text-center shadow-xs">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-rose-100 text-rose-700">
+            <ShieldAlert className="h-7 w-7" />
+          </div>
+          <p className="mt-4 text-xs font-bold uppercase tracking-wider text-rose-700">
+            Acceso Bloqueado • Cuenta Inactiva
+          </p>
+          <h1 className="mt-1 text-xl font-bold text-slate-900">
+            Usuario inactivo
+          </h1>
+          <p className="mt-2 text-sm text-slate-600 leading-relaxed">
+            Su usuario se encuentra inactivo. Contacte al administrador.
+          </p>
+          <div className="mt-6">
+            <Button variant="outline" onClick={logout} className="w-full">
+              Cerrar sesión
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return <Outlet />;

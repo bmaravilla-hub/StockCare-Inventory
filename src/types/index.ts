@@ -1,4 +1,5 @@
 export type UserRole = 'ADMIN' | 'BODEGA';
+export type UserStatus = 'Activo' | 'Inactivo';
 
 export interface UserSession {
   id: string;
@@ -8,7 +9,11 @@ export interface UserSession {
   role: UserRole;
   roleLabel: string;
   branch: string;
+  status: UserStatus;
+  createdAt?: string;
+  updatedAt?: string;
   lastLogin: string;
+  isUnprovisioned?: boolean;
 }
 
 export interface SystemSettings {

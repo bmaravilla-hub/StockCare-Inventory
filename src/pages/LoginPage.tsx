@@ -37,20 +37,19 @@ export const LoginPage: React.FC = () => {
     setAuthError(null);
 
     const errors: { emailOrUser?: string; fullName?: string; password?: string } = {};
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailOrUser.trim()) {
       errors.emailOrUser = 'Ingrese su correo electrónico.';
-    } else if (!emailOrUser.includes('@')) {
-      errors.emailOrUser = 'Ingrese un correo electrónico válido.';
+    } else if (!emailRegex.test(emailOrUser.trim())) {
+      errors.emailOrUser = 'Ingrese un formato de correo válido (ej. usuario@dominio.com).';
     }
     if (mode === 'register' && !fullName.trim()) {
       errors.fullName = 'Ingrese su nombre completo.';
     }
     if (!password.trim()) {
       errors.password = 'Ingrese la clave de acceso.';
-    } else if (password.trim().length < 6 && mode === 'register') {
-      errors.password = 'La clave debe contener al menos 6 caracteres.';
-    } else if (password.trim().length < 4) {
-      errors.password = 'La clave debe contener al menos 4 caracteres.';
+    } else if (password.trim().length < 6) {
+      errors.password = 'La contraseña debe tener al menos 6 caracteres.';
     }
 
     if (Object.keys(errors).length > 0) {

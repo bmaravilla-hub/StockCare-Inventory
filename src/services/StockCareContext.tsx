@@ -10,7 +10,6 @@ import type {
   ProductStatus,
   SystemSettings,
   ToastMessage,
-  UserRole,
   UserSession,
 } from '../types';
 import { getBatchExpiryStatus, getProductTotalStock } from '../utils/inventory';
@@ -22,6 +21,7 @@ import {
   loginWithGoogle as fbLoginGoogle,
   logoutUser as fbLogout,
   subscribeToAuthChanges,
+  updateUserProfile,
 } from './authService';
 import {
   fetchFirestoreInventory,
@@ -107,12 +107,11 @@ export interface StockCareContextValue {
   registerWithEmail: (
     email: string,
     pass: string,
-    fullName: string,
-    role?: UserRole
+    fullName: string
   ) => Promise<ActionResult<UserSession>>;
   loginWithGoogle: () => Promise<ActionResult<UserSession>>;
   logout: () => void;
-  updateProfile: (payload: { fullName: string; email: string }) => void;
+  updateProfile: (payload: { fullName: string; branch?: string }) => Promise<ActionResult>;
   updateSettings: (next: SystemSettings) => void;
   createProduct: (input: ProductInput) => ActionResult<Product>;
   updateProduct: (id: string, input: ProductInput) => ActionResult<Product>;
@@ -198,10 +197,9 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
     async (
       email: string,
       pass: string,
-      fullName: string,
-      role: UserRole = 'BODEGA'
+      fullName: string
     ): Promise<ActionResult<UserSession>> => {
-      const res = await fbRegisterEmail(email, pass, fullName, role);
+      const res = await fbRegisterEmail(email, pass, fullName);
       if (res.ok && res.user) {
         setSession(res.user);
         addToast({
@@ -257,23 +255,38 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [addToast]);
 
   const updateProfile = useCallback(
-    (payload: { fullName: string; email: string }) => {
-      setSession((prev) =>
-        prev
-          ? {
-              ...prev,
-              fullName: payload.fullName.trim(),
-              email: payload.email.trim(),
-            }
-          : null
-      );
-      addToast({
-        type: 'success',
-        title: 'Perfil actualizado',
-        message: 'Sus datos de usuario han sido guardados.',
-      });
+    async (payload: { fullName: string; branch?: string }): Promise<ActionResult> => {
+      if (!session) {
+        return { ok: false, error: 'No hay una sesión activa.' };
+      }
+      const res = await updateUserProfile(session.id, payload);
+      if (res.ok) {
+        setSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                fullName: payload.fullName.trim(),
+                branch: payload.branch?.trim() || prev.branch,
+                updatedAt: new Date().toISOString(),
+              }
+            : null
+        );
+        addToast({
+          type: 'success',
+          title: 'Perfil actualizado',
+          message: 'Sus datos de usuario han sido guardados en Firestore.',
+        });
+        return { ok: true };
+      } else {
+        addToast({
+          type: 'error',
+          title: 'Error al actualizar',
+          message: res.error ?? 'No fue posible guardar los cambios en su perfil.',
+        });
+        return { ok: false, error: res.error };
+      }
     },
-    [addToast]
+    [session, addToast]
   );
 
   const updateSettings = useCallback(

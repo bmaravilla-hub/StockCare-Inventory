@@ -23,11 +23,12 @@ export const ProfilePage: React.FC = () => {
   } = useStockCare();
 
   const [fullName, setFullName] = useState(session?.fullName ?? '');
-  const [email, setEmail] = useState(session?.email ?? '');
+  const [branch, setBranch] = useState(session?.branch ?? '');
   const [profileErrors, setProfileErrors] = useState<{
     fullName?: string;
-    email?: string;
+    branch?: string;
   }>({});
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   const [sysForm, setSysForm] = useState(settings);
   const [sysError, setSysError] = useState<string | null>(null);
@@ -36,19 +37,22 @@ export const ProfilePage: React.FC = () => {
 
   const isAdmin = session.role === 'ADMIN';
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    const errs: { fullName?: string; email?: string } = {};
+    const errs: { fullName?: string; branch?: string } = {};
     if (!fullName.trim()) errs.fullName = 'El nombre completo es obligatorio.';
-    if (!email.trim() || !email.includes('@')) {
-      errs.email = 'Ingrese un correo institucional válido.';
-    }
+    if (!branch.trim()) errs.branch = 'La sucursal es obligatoria.';
     if (Object.keys(errs).length > 0) {
       setProfileErrors(errs);
       return;
     }
     setProfileErrors({});
-    updateProfile({ fullName, email });
+    setIsSavingProfile(true);
+    try {
+      await updateProfile({ fullName: fullName.trim(), branch: branch.trim() });
+    } finally {
+      setIsSavingProfile(false);
+    }
   };
 
   const handleSaveSettings = (e: React.FormEvent) => {
@@ -125,25 +129,34 @@ export const ProfilePage: React.FC = () => {
             />
 
             <Input
+              label="Sucursal o Área Asignada"
+              required
+              value={branch}
+              onChange={(e) => setBranch(e.target.value)}
+              error={profileErrors.branch}
+              leftIcon={<Building2 className="h-4 w-4" />}
+            />
+
+            <Input
               label="Correo electrónico"
               type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              error={profileErrors.email}
+              value={session.email}
+              disabled
+              helperText="Vinculado a su cuenta de acceso en Firebase Authentication"
             />
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Input
-                label="Usuario"
+                label="Identificador de Usuario"
                 value={session.username}
                 disabled
-                helperText="Identificador de sesión simulada"
+                helperText="Identificador UID de cuenta"
               />
               <Input
                 label="Rol asignado"
                 value={session.roleLabel}
                 disabled
+                helperText="Gestionado en base de datos"
               />
             </div>
 
@@ -151,6 +164,7 @@ export const ProfilePage: React.FC = () => {
               <Button
                 type="submit"
                 variant="primary"
+                isLoading={isSavingProfile}
                 leftIcon={<Save className="h-4 w-4" />}
               >
                 Guardar cambios de perfil

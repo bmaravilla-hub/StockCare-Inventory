@@ -107,9 +107,25 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow create: if isOwner(userId);
-      allow update: if isOwner(userId);
+      // Un usuario autenticado solo puede leer su propio perfil
+      allow read: if isOwner(userId);
+
+      // Creación permitida solo por el propio usuario autenticado,
+      // forzando siempre el rol BODEGA y status Activo (prevención de escalamiento de privilegios)
+      allow create: if isOwner(userId)
+        && request.resource.data.uid == userId
+        && request.resource.data.email is string
+        && request.resource.data.role == 'BODEGA'
+        && request.resource.data.status == 'Activo';
+
+      // Actualización permitida solo por el propio usuario autenticado,
+      // garantizando la inmutabilidad de uid, role y status desde el cliente
+      allow update: if isOwner(userId)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.status == resource.data.status;
+
+      // Eliminación prohibida desde el frontend
       allow delete: if false;
     }
 
