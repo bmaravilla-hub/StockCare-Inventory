@@ -380,6 +380,7 @@ export function subscribeToAuthChanges(
   onUserChanged: (session: UserSession | null) => void
 ): () => void {
   if (!isFirebaseConfigured) {
+    onUserChanged(null);
     return () => {};
   }
 
