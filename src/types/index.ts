@@ -133,17 +133,31 @@ export type ExitReason =
   | 'Devolución a proveedor'
   | 'Ajuste de inventario';
 
+export interface ExitInput {
+  productId: string;
+  batchId: string;
+  quantity: number;
+  reason: ExitReason;
+  reference?: string;
+  date: string; // YYYY-MM-DD
+  notes?: string;
+}
+
 export interface ExitRecord {
   id: string;
   productId: string;
+  productCode: string; // Snapshot histórico del código
+  productName: string; // Snapshot histórico del nombre
   batchId: string;
-  batchNumber: string;
+  batchNumber: string; // Snapshot histórico del número de lote
+  expiryDate: string;  // Snapshot histórico YYYY-MM-DD
   quantity: number;
   reason: ExitReason;
   reference: string;
   date: string; // YYYY-MM-DD
   notes?: string;
   registeredBy: string;
+  registeredByUid: string;
   createdAt: string;
 }
 
@@ -154,10 +168,15 @@ export interface MovementRecord {
   date: string; // YYYY-MM-DD
   createdAt: string;
   productId: string;
+  productCode?: string;
+  productName?: string;
+  batchId?: string;
   batchNumber: string;
   type: MovementType;
   quantity: number;
   user: string;
+  userId?: string;
+  createdBy?: string;
   reference: string;
   detail: string;
   resultingStock: number;

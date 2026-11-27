@@ -329,8 +329,25 @@ service cloud.firestore {
     }
 
     match /exits/{exitId} {
+      // Lectura permitida a usuarios autenticados con perfil activo
       allow read: if isActiveUser();
-      allow create: if isBodega();
+
+      // Creación permitida a BODEGA activo con validaciones de campos requeridos y motivos oficiales
+      allow create: if isBodega()
+        && request.resource.data.registeredByUid == request.auth.uid
+        && request.resource.data.productId is string
+        && request.resource.data.batchId is string
+        && request.resource.data.quantity is int
+        && request.resource.data.quantity > 0
+        && request.resource.data.reason in [
+          'Venta',
+          'Descarte por vencimiento',
+          'Uso interno',
+          'Devolución a proveedor',
+          'Ajuste de inventario'
+        ];
+
+      // Prohibido modificar o eliminar salidas históricas (inmutabilidad estricta)
       allow update, delete: if false;
     }
 

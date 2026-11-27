@@ -11,7 +11,7 @@ import type { MovementRecord } from '../types';
 import { formatDateDisplay } from '../utils/date';
 
 export const MovementsPage: React.FC = () => {
-  const { movements, products } = useStockCare();
+  const { movements, isMovementsLoading, movementsError, products } = useStockCare();
 
   const [productFilter, setProductFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -202,8 +202,10 @@ export const MovementsPage: React.FC = () => {
         columns={columns}
         data={filteredMovements}
         rowKey={(m) => m.id}
-        emptyTitle="Sin movimientos en el rango seleccionado"
-        emptyDescription="Modifique los filtros de producto, tipo o fechas para ver el historial."
+        isLoading={isMovementsLoading}
+        error={movementsError}
+        emptyTitle={hasFilters ? "Sin movimientos en el rango seleccionado" : "No hay movimientos registrados"}
+        emptyDescription={hasFilters ? "Modifique los filtros de producto, tipo o fechas para ver el historial." : "Aún no se han registrado transacciones de inventario."}
       />
     </div>
   );

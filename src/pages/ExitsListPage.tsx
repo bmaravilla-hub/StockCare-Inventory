@@ -7,13 +7,13 @@ import { Input } from '../components/Input';
 import { Select } from '../components/Select';
 import { DataTable, type TableColumn } from '../components/DataTable';
 import { Badge } from '../components/Badge';
-import { EXIT_REASONS } from '../data/mockData';
+import { EXIT_REASONS } from '../constants';
 import { useStockCare } from '../hooks/useStockCare';
 import type { ExitRecord } from '../types';
 import { formatDateDisplay } from '../utils/date';
 
 export const ExitsListPage: React.FC = () => {
-  const { session, exits, products } = useStockCare();
+  const { session, exits, isExitsLoading, exitsError, products } = useStockCare();
   const canCreate = session?.role === 'BODEGA';
 
   const [search, setSearch] = useState('');
@@ -25,11 +25,13 @@ export const ExitsListPage: React.FC = () => {
       if (reasonFilter && exit.reason !== reasonFilter) return false;
       if (!q) return true;
       const prod = products.find((p) => p.id === exit.productId);
+      const prodName = exit.productName || prod?.name || '';
+      const prodCode = exit.productCode || prod?.code || '';
       return (
         exit.reference.toLowerCase().includes(q) ||
         exit.batchNumber.toLowerCase().includes(q) ||
-        (prod?.name.toLowerCase().includes(q) ?? false) ||
-        (prod?.code.toLowerCase().includes(q) ?? false)
+        prodName.toLowerCase().includes(q) ||
+        prodCode.toLowerCase().includes(q)
       );
     });
   }, [exits, products, search, reasonFilter]);
@@ -58,13 +60,15 @@ export const ExitsListPage: React.FC = () => {
       header: 'Producto',
       render: (row) => {
         const prod = products.find((p) => p.id === row.productId);
+        const displayName = row.productName || prod?.name || 'Producto';
+        const displayCode = row.productCode || prod?.code || '';
         return (
           <div>
-            <p className="font-semibold text-slate-900">
-              {prod?.name ?? 'Producto'}
-            </p>
+            <p className="font-semibold text-slate-900">{displayName}</p>
             <p className="text-xs text-slate-500">
-              {prod?.code} • Lote <span className="font-mono">{row.batchNumber}</span>
+              {displayCode ? `${displayCode} • ` : ''}Lote{' '}
+              <span className="font-mono font-medium text-slate-700">{row.batchNumber}</span>
+              {row.expiryDate ? ` (Vence: ${formatDateDisplay(row.expiryDate)})` : ''}
             </p>
           </div>
         );
@@ -108,7 +112,7 @@ export const ExitsListPage: React.FC = () => {
     <div>
       <PageHeader
         title="Listado de Salidas de Inventario"
-        description="Registro histórico de despachos por venta, uso interno y descartes de lotes."
+        description="Historial inmutable de despachos por venta, uso interno y descartes de lotes (RF-04)."
         breadcrumbs={[
           { label: 'Dashboard', to: '/dashboard' },
           { label: 'Salidas' },
@@ -150,10 +154,28 @@ export const ExitsListPage: React.FC = () => {
         columns={columns}
         data={filteredExits}
         rowKey={(r) => r.id}
-        emptyTitle="No se encontraron salidas"
-        emptyDescription="No hay salidas registradas que coincidan con su búsqueda."
+        isLoading={isExitsLoading}
+        error={exitsError}
+        emptyTitle={
+          search || reasonFilter
+            ? 'No se encontraron salidas'
+            : 'No hay salidas registradas.'
+        }
+        emptyDescription={
+          search || reasonFilter
+            ? 'No hay salidas que coincidan con los criterios aplicados.'
+            : 'Aún no se han registrado despachos ni salidas de mercadería en el inventario.'
+        }
+        emptyAction={
+          canCreate && !search && !reasonFilter ? (
+            <Link to="/salidas/nueva">
+              <Button variant="primary" size="sm" leftIcon={<Plus className="h-4 w-4" />}>
+                Registrar salida
+              </Button>
+            </Link>
+          ) : undefined
+        }
       />
     </div>
   );
 };
-

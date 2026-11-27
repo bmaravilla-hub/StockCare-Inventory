@@ -18,6 +18,7 @@ import type {
   EntryInput,
   EntryItem,
   EntryRecord,
+  ExitInput,
   ExitRecord,
   MovementRecord,
   Product,
@@ -29,7 +30,7 @@ import type {
 } from '../types';
 import type { ActionResult, ProductInput } from './StockCareContext';
 import { getBatchExpiryStatus } from '../utils/inventory';
-import { isValidFutureOrTodayDate, isValidNotFutureDate } from '../utils/date';
+import { diffDaysFromToday, isValidFutureOrTodayDate, isValidNotFutureDate } from '../utils/date';
 
 export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   pharmacyName: 'Farmacia StockCare',
@@ -699,6 +700,117 @@ export function subscribeToBatches(
 }
 
 /**
+ * Escucha cambios en tiempo real sobre la colección de salidas mediante onSnapshot().
+ * Ordena descendentemente por fecha de creación (más recientes primero).
+ */
+export function subscribeToExits(
+  onExitsChanged: (exits: ExitRecord[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  if (!isFirebaseConfigured) {
+    onExitsChanged([]);
+    return () => {};
+  }
+
+  const exitsRef = collection(db, 'exits');
+
+  return onSnapshot(
+    exitsRef,
+    (snap) => {
+      const items: ExitRecord[] = snap.docs.map((docSnap) => {
+        const data = docSnap.data();
+        const createdAt = data.createdAt?.toDate
+          ? data.createdAt.toDate().toISOString()
+          : (typeof data.createdAt === 'string' ? data.createdAt : new Date().toISOString());
+
+        return {
+          id: docSnap.id,
+          productId: data.productId || '',
+          productCode: data.productCode || '',
+          productName: data.productName || '',
+          batchId: data.batchId || '',
+          batchNumber: data.batchNumber || '',
+          expiryDate: data.expiryDate || '',
+          quantity: typeof data.quantity === 'number' ? data.quantity : 0,
+          reason: data.reason || 'Venta',
+          reference: data.reference || '',
+          notes: data.notes || undefined,
+          date: data.date || '',
+          registeredBy: data.registeredBy || '',
+          registeredByUid: data.registeredByUid || '',
+          createdAt,
+        };
+      });
+
+      // Ordenar descendente por fecha de creación (más recientes primero)
+      items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+      onExitsChanged(items);
+    },
+    (err) => {
+      console.error('Error en listener onSnapshot de salidas:', err);
+      if (onError) onError(err);
+    }
+  );
+}
+
+/**
+ * Escucha cambios en tiempo real sobre la colección de movimientos (Kardex) mediante onSnapshot().
+ * Ordena descendentemente por fecha de creación (más recientes primero).
+ */
+export function subscribeToMovements(
+  onMovementsChanged: (movements: MovementRecord[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  if (!isFirebaseConfigured) {
+    onMovementsChanged([]);
+    return () => {};
+  }
+
+  const movementsRef = collection(db, 'movements');
+
+  return onSnapshot(
+    movementsRef,
+    (snap) => {
+      const items: MovementRecord[] = snap.docs.map((docSnap) => {
+        const data = docSnap.data();
+        const createdAt = data.createdAt?.toDate
+          ? data.createdAt.toDate().toISOString()
+          : (typeof data.createdAt === 'string' ? data.createdAt : new Date().toISOString());
+
+        return {
+          id: docSnap.id,
+          date: data.date || '',
+          createdAt,
+          productId: data.productId || '',
+          productCode: data.productCode || undefined,
+          productName: data.productName || undefined,
+          batchId: data.batchId || undefined,
+          batchNumber: data.batchNumber || '',
+          type: data.type || 'Salida',
+          quantity: typeof data.quantity === 'number' ? data.quantity : 0,
+          user: data.user || '',
+          userId: data.userId || undefined,
+          createdBy: data.createdBy || undefined,
+          reference: data.reference || '',
+          detail: data.detail || '',
+          resultingStock: typeof data.resultingStock === 'number' ? data.resultingStock : 0,
+        };
+      });
+
+      // Ordenar descendente por fecha de creación (más recientes primero)
+      items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+      onMovementsChanged(items);
+    },
+    (err) => {
+      console.error('Error en listener onSnapshot de movimientos:', err);
+      if (onError) onError(err);
+    }
+  );
+}
+
+/**
  * Normaliza un texto para claves de unicidad determinísticas:
  * Trim, mayúsculas y reemplazo de caracteres no alfanuméricos por guion bajo.
  */
@@ -1100,6 +1212,210 @@ export async function registerEntryFirestore(
       return { ok: false, error: 'El servicio de base de datos no está disponible. Verifique su conexión.' };
     }
     return { ok: false, error: error.message || 'No fue posible registrar la entrada en la base de datos.' };
+  }
+}
+
+/**
+ * Registra una salida de inventario de forma estrictamente atómica mediante runTransaction:
+ * 1. Valida campos de entrada y coherencia de datos.
+ * 2. Ejecuta runTransaction:
+ *    - FASE DE LECTURAS:
+ *      - Lectura del lote (batchRef) y validación de existencia, asignación al producto y saldo disponible.
+ *      - Lectura del producto (productRef) y validación de estado Activo y saldo total.
+ *      - Validación FEFO y de normativa farmacéutica para lotes vencidos:
+ *        Lotes vencidos NO pueden salir por 'Venta' ni 'Uso interno', únicamente por descarte/devolución/ajuste.
+ *    - FASE DE ESCRITURAS:
+ *      - Creación inmutable de exits/{exitId} con snapshot histórico.
+ *      - Reducción atómica de batches/{batchId}.quantity y actualización de status ('Agotado' si llega a 0).
+ *      - Reducción atómica de products/{productId}.currentStock manteniendo metadatos de catálogo congelados.
+ *      - Registro append-only en movements/{movementId} con tipo 'Salida', resultingStock y auditoría.
+ */
+export async function registerExitFirestore(
+  input: ExitInput,
+  userId: string,
+  userName: string
+): Promise<ActionResult<ExitRecord>> {
+  if (!isFirebaseConfigured) {
+    return { ok: false, error: 'Firebase no está configurado en el archivo .env.' };
+  }
+
+  const cleanProductId = input.productId.trim();
+  const cleanBatchId = input.batchId.trim();
+  const cleanReason = input.reason;
+  const cleanDate = input.date.trim();
+  const qty = Number(input.quantity);
+
+  if (!cleanProductId) {
+    return { ok: false, error: 'Debe seleccionar un producto.' };
+  }
+  if (!cleanBatchId) {
+    return { ok: false, error: 'Debe seleccionar un lote con existencias disponibles.' };
+  }
+  if (!Number.isInteger(qty) || qty <= 0) {
+    return { ok: false, error: 'La cantidad a retirar debe ser un número entero mayor que cero.' };
+  }
+  if (!cleanReason) {
+    return { ok: false, error: 'Debe indicar el motivo de la salida.' };
+  }
+  if (!cleanDate || !isValidNotFutureDate(cleanDate)) {
+    return { ok: false, error: 'La fecha de salida no puede ser posterior al día de hoy.' };
+  }
+
+  try {
+    const exitRef = doc(collection(db, 'exits'));
+    const movRef = doc(collection(db, 'movements'));
+    const nowIso = new Date().toISOString();
+
+    const createdExit = await runTransaction(db, async (tx) => {
+      // ==============================================================
+      // FASE 1: TODAS LAS LECTURAS ATÓMICAS (tx.get)
+      // ==============================================================
+
+      // 1.1 Leer el lote seleccionado
+      const batchRef = doc(db, 'batches', cleanBatchId);
+      const batchSnap = await tx.get(batchRef);
+      if (!batchSnap.exists()) {
+        throw new Error('El lote seleccionado no existe en la base de datos.');
+      }
+      const batchData = batchSnap.data();
+
+      // Verificar que el lote pertenezca al producto
+      if (batchData.productId !== cleanProductId) {
+        throw new Error('El lote seleccionado no corresponde al producto indicado.');
+      }
+
+      const availableBatchQty = typeof batchData.quantity === 'number' ? batchData.quantity : 0;
+      if (availableBatchQty <= 0) {
+        throw new Error(`El lote ${batchData.batchNumber} se encuentra agotado (0 unidades disponibles).`);
+      }
+      if (qty > availableBatchQty) {
+        throw new Error(
+          `La cantidad solicitada (${qty}) supera la existencia disponible del lote ${batchData.batchNumber} (${availableBatchQty} uds.).`
+        );
+      }
+
+      // 1.2 Leer el producto
+      const productRef = doc(db, 'products', cleanProductId);
+      const productSnap = await tx.get(productRef);
+      if (!productSnap.exists()) {
+        throw new Error('El producto no existe en el catálogo.');
+      }
+      const productData = productSnap.data();
+      if (productData.status !== 'Activo') {
+        throw new Error(`El producto "${productData.name}" se encuentra inactivo y no admite operaciones de salida.`);
+      }
+
+      const currentStock = typeof productData.currentStock === 'number' ? productData.currentStock : 0;
+      if (qty > currentStock) {
+        throw new Error(
+          `La cantidad solicitada (${qty}) supera la existencia total del producto "${productData.name}" (${currentStock} uds.).`
+        );
+      }
+
+      // 1.3 Validación de vencimiento
+      // Un lote con expiryDate anterior a hoy está vencido.
+      const isExpired = diffDaysFromToday(batchData.expiryDate) < 0;
+      const isOrdinaryExit = cleanReason === 'Venta' || cleanReason === 'Uso interno';
+      if (isExpired && isOrdinaryExit) {
+        throw new Error(
+          `No se puede registrar una salida ordinaria desde un lote vencido (${batchData.batchNumber}). Seleccione 'Descarte por vencimiento', 'Devolución a proveedor' o 'Ajuste de inventario'.`
+        );
+      }
+
+      // ==============================================================
+      // FASE 2: TODAS LAS ESCRITURAS ATÓMICAS (tx.set / tx.update)
+      // ==============================================================
+
+      const newBatchQty = availableBatchQty - qty;
+      const newBatchStatus = newBatchQty > 0 ? 'Activo' : 'Agotado';
+      const newProductStock = currentStock - qty;
+      const referenceCode =
+        input.reference?.trim().toUpperCase() ||
+        `SAL-${new Date().getFullYear()}-${exitRef.id.slice(0, 6).toUpperCase()}`;
+
+      // 2.1 Crear documento exits/{exitId} con snapshot histórico inmutable
+      const exitDocData = {
+        productId: cleanProductId,
+        productCode: productData.code || '',
+        productName: productData.name || '',
+        batchId: cleanBatchId,
+        batchNumber: batchData.batchNumber || '',
+        expiryDate: batchData.expiryDate || '',
+        quantity: qty,
+        reason: cleanReason,
+        reference: referenceCode,
+        notes: input.notes?.trim() || null,
+        date: cleanDate,
+        registeredBy: userName,
+        registeredByUid: userId,
+        createdAt: serverTimestamp(),
+      };
+
+      tx.set(exitRef, exitDocData);
+
+      // 2.2 Descontar existencias del lote batches/{batchId} (status 'Agotado' si llega a 0)
+      tx.update(batchRef, {
+        quantity: newBatchQty,
+        status: newBatchStatus,
+        updatedAt: serverTimestamp(),
+      });
+
+      // 2.3 Descontar stock total de products/{productId} manteniendo metadatos congelados
+      tx.update(productRef, {
+        currentStock: newProductStock,
+        updatedAt: serverTimestamp(),
+        updatedBy: userId,
+      });
+
+      // 2.4 Registrar movimiento Kardex append-only tipo Salida
+      tx.set(movRef, {
+        date: cleanDate,
+        createdAt: serverTimestamp(),
+        productId: cleanProductId,
+        productCode: productData.code || '',
+        productName: productData.name || '',
+        batchId: cleanBatchId,
+        batchNumber: batchData.batchNumber || '',
+        type: 'Salida',
+        quantity: qty,
+        user: userName,
+        userId,
+        createdBy: userId,
+        reference: referenceCode,
+        detail: cleanReason,
+        resultingStock: newProductStock,
+      });
+
+      return {
+        id: exitRef.id,
+        productId: cleanProductId,
+        productCode: productData.code || '',
+        productName: productData.name || '',
+        batchId: cleanBatchId,
+        batchNumber: batchData.batchNumber || '',
+        expiryDate: batchData.expiryDate || '',
+        quantity: qty,
+        reason: cleanReason,
+        reference: referenceCode,
+        notes: input.notes?.trim() || undefined,
+        date: cleanDate,
+        registeredBy: userName,
+        registeredByUid: userId,
+        createdAt: nowIso,
+      };
+    });
+
+    return { ok: true, data: createdExit };
+  } catch (err: unknown) {
+    console.error('Error al registrar salida en Firestore:', err);
+    const error = err as { code?: string; message?: string };
+    if (error.code === 'permission-denied') {
+      return { ok: false, error: 'Permiso denegado: no cuenta con autorización para registrar salidas de inventario.' };
+    }
+    if (error.code === 'unavailable' || error.code === 'deadline-exceeded') {
+      return { ok: false, error: 'El servicio de base de datos no está disponible. Verifique su conexión.' };
+    }
+    return { ok: false, error: error.message || 'No fue posible registrar la salida en la base de datos.' };
   }
 }
 

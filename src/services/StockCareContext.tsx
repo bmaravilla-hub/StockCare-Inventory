@@ -3,7 +3,7 @@ import type {
   Batch,
   EntryInput,
   EntryRecord,
-  ExitReason,
+  ExitInput,
   ExitRecord,
   MovementRecord,
   Product,
@@ -14,8 +14,6 @@ import type {
   ToastMessage,
   UserSession,
 } from '../types';
-import { getBatchExpiryStatus, getProductTotalStock } from '../utils/inventory';
-import { isValidNotFutureDate } from '../utils/date';
 import { isFirebaseConfigured } from './firebase';
 import {
   loginWithEmail as fbLoginEmail,
@@ -27,9 +25,6 @@ import {
 } from './authService';
 import {
   fetchFirestoreInventory,
-  persistBatch,
-  persistExit,
-  persistMovement,
   persistSettings,
   DEFAULT_SYSTEM_SETTINGS,
   subscribeToProducts,
@@ -41,6 +36,9 @@ import {
   subscribeToEntries,
   subscribeToBatches,
   registerEntryFirestore,
+  subscribeToExits,
+  subscribeToMovements,
+  registerExitFirestore,
 } from './firestoreService';
 
 export interface ProductInput {
@@ -53,17 +51,7 @@ export interface ProductInput {
   description?: string;
 }
 
-export type { EntryInput } from '../types';
-
-export interface ExitInput {
-  productId: string;
-  batchId: string;
-  quantity: number;
-  reason: ExitReason;
-  reference: string;
-  date: string;
-  notes?: string;
-}
+export type { EntryInput, ExitInput } from '../types';
 
 export interface ActionResult<T = undefined> {
   ok: boolean;
@@ -72,14 +60,10 @@ export interface ActionResult<T = undefined> {
 }
 
 export interface InventoryState {
-  exits: ExitRecord[];
-  movements: MovementRecord[];
   settings: SystemSettings;
 }
 
 const INITIAL_STATE: InventoryState = {
-  exits: [],
-  movements: [],
   settings: DEFAULT_SYSTEM_SETTINGS,
 };
 
@@ -102,7 +86,13 @@ export interface StockCareContextValue {
   isLoadingBatches: boolean;
   batchesError: string | null;
   exits: ExitRecord[];
+  isExitsLoading: boolean;
+  isLoadingExits: boolean;
+  exitsError: string | null;
   movements: MovementRecord[];
+  isMovementsLoading: boolean;
+  isLoadingMovements: boolean;
+  movementsError: string | null;
   settings: SystemSettings;
   toasts: ToastMessage[];
   isFirebaseConfigured: boolean;
@@ -122,7 +112,7 @@ export interface StockCareContextValue {
   createSupplier: (input: SupplierInput) => Promise<ActionResult<Supplier>>;
   updateSupplier: (id: string, input: SupplierInput) => Promise<ActionResult<Supplier>>;
   registerEntry: (input: EntryInput) => Promise<ActionResult<EntryRecord>>;
-  registerExit: (input: ExitInput) => ActionResult<ExitRecord>;
+  registerExit: (input: ExitInput) => Promise<ActionResult<ExitRecord>>;
   addToast: (toast: Omit<ToastMessage, 'id'>) => void;
   dismissToast: (id: string) => void;
 }
@@ -146,6 +136,12 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
   const [batches, setBatches] = useState<Batch[]>([]);
   const [isBatchesLoading, setIsBatchesLoading] = useState(true);
   const [batchesError, setBatchesError] = useState<string | null>(null);
+  const [exits, setExits] = useState<ExitRecord[]>([]);
+  const [isExitsLoading, setIsExitsLoading] = useState(true);
+  const [exitsError, setExitsError] = useState<string | null>(null);
+  const [movements, setMovements] = useState<MovementRecord[]>([]);
+  const [isMovementsLoading, setIsMovementsLoading] = useState(true);
+  const [movementsError, setMovementsError] = useState<string | null>(null);
   const [state, setState] = useState<InventoryState>(INITIAL_STATE);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -286,15 +282,77 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
     return () => unsubscribe();
   }, [session?.id, isAuthReady]);
 
-  // Cargar inventario restante (exits, movements, settings) desde Firestore si el usuario está autenticado
+  // Suscribirse en tiempo real a las salidas en Cloud Firestore (onSnapshot)
+  useEffect(() => {
+    if (!isFirebaseConfigured || !isAuthReady) {
+      return;
+    }
+
+    if (!session) {
+      setExits([]);
+      setIsExitsLoading(false);
+      setExitsError(null);
+      return;
+    }
+
+    setIsExitsLoading(true);
+    setExitsError(null);
+
+    const unsubscribe = subscribeToExits(
+      (items) => {
+        setExits(items);
+        setIsExitsLoading(false);
+        setExitsError(null);
+      },
+      (err) => {
+        console.error('Error en suscripción de salidas Firestore:', err);
+        setExitsError('No fue posible sincronizar las salidas con la base de datos.');
+        setIsExitsLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [session?.id, isAuthReady]);
+
+  // Suscribirse en tiempo real a los movimientos Kardex en Cloud Firestore (onSnapshot)
+  useEffect(() => {
+    if (!isFirebaseConfigured || !isAuthReady) {
+      return;
+    }
+
+    if (!session) {
+      setMovements([]);
+      setIsMovementsLoading(false);
+      setMovementsError(null);
+      return;
+    }
+
+    setIsMovementsLoading(true);
+    setMovementsError(null);
+
+    const unsubscribe = subscribeToMovements(
+      (items) => {
+        setMovements(items);
+        setIsMovementsLoading(false);
+        setMovementsError(null);
+      },
+      (err) => {
+        console.error('Error en suscripción de movimientos Firestore:', err);
+        setMovementsError('No fue posible sincronizar los movimientos con la base de datos.');
+        setIsMovementsLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [session?.id, isAuthReady]);
+
+  // Cargar configuración de sistema desde Firestore si el usuario está autenticado
   useEffect(() => {
     if (!isFirebaseConfigured || !isAuthReady || !session) return;
     let isMounted = true;
     fetchFirestoreInventory().then((remoteData) => {
       if (isMounted && remoteData) {
         setState({
-          exits: remoteData.exits,
-          movements: remoteData.movements,
           settings: remoteData.settings,
         });
       }
@@ -563,118 +621,29 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   const registerExit = useCallback(
-    (input: ExitInput): ActionResult<ExitRecord> => {
-      if (!input.productId || !input.batchId || !input.reason || !input.date) {
-        return { ok: false, error: 'Complete todos los campos obligatorios de la salida.' };
+    async (input: ExitInput): Promise<ActionResult<ExitRecord>> => {
+      if (!session) {
+        return { ok: false, error: 'Debe iniciar sesión para registrar una salida de inventario.' };
       }
-      if (!isValidNotFutureDate(input.date)) {
+      if (session.role !== 'BODEGA') {
         return {
           ok: false,
-          error: 'La fecha de salida no puede ser posterior al día de hoy.',
-        };
-      }
-      if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
-        return {
-          ok: false,
-          error: 'La cantidad a retirar debe ser mayor que cero.',
+          error: 'Rol no autorizado. Solo el personal de BODEGA puede registrar salidas de inventario.',
         };
       }
 
-      const batch = batches.find(
-        (b) => b.id === input.batchId && b.productId === input.productId
-      );
-      if (!batch || batch.quantity <= 0) {
-        return {
-          ok: false,
-          error: 'El lote seleccionado no cuenta con existencias disponibles.',
-        };
+      const res = await registerExitFirestore(input, session.id, session.fullName);
+      if (res.ok && res.data) {
+        addToast({
+          type: 'success',
+          title: 'Salida registrada correctamente',
+          message: `Se descontaron ${res.data.quantity} unidades del lote ${res.data.batchNumber}.`,
+        });
+        return { ok: true, data: res.data };
       }
-      if (input.quantity > batch.quantity) {
-        return {
-          ok: false,
-          error: `La cantidad solicitada (${input.quantity}) supera la existencia disponible del lote ${batch.batchNumber} (${batch.quantity} unidades).`,
-        };
-      }
-
-      const expiryStatus = getBatchExpiryStatus(
-        batch.expiryDate,
-        state.settings.expiryAlertDays
-      );
-      if (expiryStatus === 'Vencido' && input.reason === 'Venta') {
-        return {
-          ok: false,
-          error: `El lote ${batch.batchNumber} se encuentra vencido. No puede registrarse como "Venta"; seleccione "Descarte por vencimiento" o "Devolución a proveedor".`,
-        };
-      }
-
-      const currentTotal = getProductTotalStock(input.productId, batches);
-      if (input.quantity > currentTotal) {
-        return {
-          ok: false,
-          error: 'La cantidad solicitada supera la existencia total del producto.',
-        };
-      }
-
-      const now = new Date().toISOString();
-      const userName = session?.fullName ?? 'Personal de Bodega';
-      const referenceCode =
-        input.reference.trim().toUpperCase() ||
-        `SAL-${new Date().getFullYear()}-${String(state.exits.length + 101).padStart(4, '0')}`;
-
-      const newExit: ExitRecord = {
-        id: `sal-${Date.now()}`,
-        productId: input.productId,
-        batchId: batch.id,
-        batchNumber: batch.batchNumber,
-        quantity: input.quantity,
-        reason: input.reason,
-        reference: referenceCode,
-        date: input.date,
-        notes: input.notes?.trim() || undefined,
-        registeredBy: userName,
-        createdAt: now,
-      };
-
-      const updatedBatch: Batch = {
-        ...batch,
-        quantity: batch.quantity - input.quantity,
-      };
-
-      const nextStock = currentTotal - input.quantity;
-
-      const newMovement: MovementRecord = {
-        id: `mov-${newExit.id}`,
-        date: newExit.date,
-        createdAt: now,
-        productId: input.productId,
-        batchNumber: batch.batchNumber,
-        type: 'Salida',
-        quantity: input.quantity,
-        user: userName,
-        reference: newExit.reference,
-        detail: newExit.reason,
-        resultingStock: nextStock,
-      };
-
-      setState((prev) => ({
-        ...prev,
-        exits: [newExit, ...prev.exits],
-        movements: [newMovement, ...prev.movements],
-      }));
-
-      persistExit(newExit);
-      persistBatch(updatedBatch);
-      persistMovement(newMovement);
-
-      addToast({
-        type: 'success',
-        title: 'Salida registrada correctamente',
-        message: `Se descontaron ${input.quantity} unidades del lote ${batch.batchNumber}.`,
-      });
-
-      return { ok: true, data: newExit };
+      return { ok: false, error: res.error };
     },
-    [session, batches, state.exits.length, state.settings.expiryAlertDays, addToast]
+    [session, addToast]
   );
 
   return (
@@ -697,8 +666,14 @@ export const StockCareProvider: React.FC<{ children: React.ReactNode }> = ({
         isBatchesLoading,
         isLoadingBatches: isBatchesLoading,
         batchesError,
-        exits: state.exits,
-        movements: state.movements,
+        exits,
+        isExitsLoading,
+        isLoadingExits: isExitsLoading,
+        exitsError,
+        movements,
+        isMovementsLoading,
+        isLoadingMovements: isMovementsLoading,
+        movementsError,
         settings: state.settings,
         toasts,
         isFirebaseConfigured,
