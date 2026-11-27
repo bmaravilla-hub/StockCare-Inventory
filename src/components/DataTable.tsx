@@ -1,5 +1,13 @@
-import React from 'react';
-import { AlertCircle, Inbox, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  AlertCircle,
+  Inbox,
+  RefreshCw,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+} from 'lucide-react';
 import { Button } from './Button';
 
 export interface TableColumn<T> {
@@ -22,6 +30,9 @@ interface DataTableProps<T> {
   emptyAction?: React.ReactNode;
   onRowClick?: (row: T) => void;
   caption?: string;
+  enablePagination?: boolean;
+  defaultPageSize?: number;
+  pageSizeOptions?: number[];
 }
 
 export function DataTable<T>({
@@ -36,7 +47,45 @@ export function DataTable<T>({
   emptyAction,
   onRowClick,
   caption,
+  enablePagination = true,
+  defaultPageSize = 10,
+  pageSizeOptions = [10, 25, 50],
 }: DataTableProps<T>) {
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(defaultPageSize);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [data.length]);
+
+  const totalPages = useMemo(() => {
+    if (!enablePagination || pageSize <= 0) return 1;
+    return Math.max(1, Math.ceil(data.length / pageSize));
+  }, [data.length, pageSize, enablePagination]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const { paginatedData, startIndex, endIndex } = useMemo(() => {
+    if (!enablePagination) {
+      return {
+        paginatedData: data,
+        startIndex: 0,
+        endIndex: data.length,
+      };
+    }
+    const start = (currentPage - 1) * pageSize;
+    const end = Math.min(start + pageSize, data.length);
+    return {
+      paginatedData: data.slice(start, end),
+      startIndex: start,
+      endIndex: end,
+    };
+  }, [data, currentPage, pageSize, enablePagination]);
+
   if (isLoading) {
     return (
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -119,7 +168,7 @@ export function DataTable<T>({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white">
-            {data.map((row) => (
+            {paginatedData.map((row) => (
               <tr
                 key={rowKey(row)}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
@@ -148,7 +197,87 @@ export function DataTable<T>({
           </tbody>
         </table>
       </div>
+
+      {enablePagination && data.length > 0 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/80 px-4 py-3 text-xs text-slate-600">
+          <div className="flex items-center gap-3">
+            <span>
+              Mostrando <strong className="font-semibold text-slate-900">{data.length === 0 ? 0 : startIndex + 1}</strong> a{' '}
+              <strong className="font-semibold text-slate-900">{endIndex}</strong> de{' '}
+              <strong className="font-semibold text-slate-900">{data.length}</strong> registros
+            </span>
+
+            <div className="flex items-center gap-1.5 pl-2 border-l border-slate-300">
+              <label htmlFor="pageSizeSelect" className="text-slate-500 whitespace-nowrap">
+                Filas por página:
+              </label>
+              <select
+                id="pageSizeSelect"
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 shadow-2xs focus:border-teal-500 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+              >
+                {pageSizeOptions.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setCurrentPage(1)}
+              disabled={currentPage <= 1}
+              title="Primera página"
+              aria-label="Primera página"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <ChevronsLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              disabled={currentPage <= 1}
+              title="Página anterior"
+              aria-label="Página anterior"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+
+            <span className="px-2 font-medium text-slate-700">
+              Página {currentPage} de {totalPages}
+            </span>
+
+            <button
+              type="button"
+              onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+              disabled={currentPage >= totalPages}
+              title="Página siguiente"
+              aria-label="Página siguiente"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentPage(totalPages)}
+              disabled={currentPage >= totalPages}
+              title="Última página"
+              aria-label="Última página"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <ChevronsRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
