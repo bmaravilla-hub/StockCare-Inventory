@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { KeyRound, Lock, Mail, ShieldCheck, User } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, Lock, Mail, ShieldCheck, User } from 'lucide-react';
 import { StockCareLogo } from '../components/StockCareLogo';
 import { Input } from '../components/Input';
 import { Button } from '../components/Button';
@@ -22,6 +22,7 @@ export const LoginPage: React.FC = () => {
   const [emailOrUser, setEmailOrUser] = useState('');
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   const [fieldErrors, setFieldErrors] = useState<{
     emailOrUser?: string;
@@ -246,13 +247,29 @@ export const LoginPage: React.FC = () => {
 
             <Input
               label="Contraseña"
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               required
               placeholder={mode === 'register' ? 'Mínimo 6 caracteres' : 'Ingrese su clave de acceso'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               error={fieldErrors.password}
               leftIcon={<KeyRound className="h-4 w-4" />}
+              rightElement={
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="rounded p-1.5 text-slate-400 hover:text-slate-600 focus:outline-none focus:text-slate-700 transition-colors cursor-pointer"
+                  aria-label={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                  title={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <Eye className="h-4 w-4" aria-hidden="true" />
+                  )}
+                </button>
+              }
               autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
             />
 
