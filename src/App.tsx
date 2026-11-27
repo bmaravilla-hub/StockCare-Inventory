@@ -31,7 +31,7 @@ import { NotFoundPage } from './pages/NotFoundPage';
 export const App: React.FC = () => {
   return (
     <StockCareProvider>
-      <BrowserRouter>
+      <BrowserRouter basename={import.meta.env.BASE_URL}>
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
