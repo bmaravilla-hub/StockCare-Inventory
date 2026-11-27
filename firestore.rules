@@ -1,7 +1,7 @@
 rules_version = '2';
 
 // ===============================================================
-// Assumed Data Model
+// Assumed Data Model & Collections
 // ===============================================================
 //
 // Collection: users
@@ -11,6 +11,7 @@ rules_version = '2';
 //   - email: string (required)
 //   - fullName: string (required)
 //   - role: string (required, 'ADMIN' | 'BODEGA')
+//   - status: string (required, 'Activo' | 'Inactivo')
 //   - branch: string (optional)
 //   - createdAt: string / timestamp
 //
@@ -22,10 +23,13 @@ rules_version = '2';
 //   - category: string (required)
 //   - presentation: string (required)
 //   - minStock: number (required, >= 0)
+//   - currentStock: number (required, >= 0)
 //   - status: string (required, 'Activo' | 'Inactivo')
 //   - description: string (optional)
-//   - createdAt: string
-//   - updatedAt: string
+//   - createdAt: string / timestamp
+//   - updatedAt: string / timestamp
+//   - createdBy: string (required, UID)
+//   - updatedBy: string (required, UID)
 //
 // Collection: suppliers
 // Document ID: {supplierId}
@@ -42,26 +46,42 @@ rules_version = '2';
 //   - createdBy: string (required, UID)
 //   - updatedBy: string (required, UID)
 //
+// Collection: entryKeys
+// Document ID: {reservationKey} = {supplierId}__{normalizedDocumentNumber}
+// Fields:
+//   - entryId: string (required)
+//   - supplierId: string (required)
+//   - documentNumber: string (required)
+//   - createdAt: timestamp / string
+//   - createdBy: string (required, UID)
+//
 // Collection: batches
-// Document ID: {batchId}
+// Document ID: {batchId} = batch_{productId}__{normalizedBatchNumber}__{expiryDate}
 // Fields:
 //   - productId: string (required)
 //   - batchNumber: string (required)
 //   - quantity: number (required, >= 0)
 //   - initialQuantity: number (required, >= 0)
 //   - expiryDate: string (required, YYYY-MM-DD)
+//   - supplierId: string (optional)
 //   - entryId: string (required)
-//   - createdAt: string
+//   - status: string (required, 'Activo' | 'Agotado')
+//   - createdAt: string / timestamp
+//   - updatedAt: string / timestamp
+//   - createdBy: string (required, UID)
 //
 // Collection: entries
 // Document ID: {entryId}
 // Fields:
 //   - documentNumber: string (required)
+//   - supplierId: string (required)
+//   - supplierName: string (required)
 //   - provider: string (required)
 //   - date: string (required, YYYY-MM-DD)
 //   - registeredBy: string (required)
-//   - createdAt: string
-//   - items: list (required)
+//   - registeredByUid: string (required)
+//   - createdAt: string / timestamp
+//   - items: list (required, size > 0)
 //   - notes: string (optional)
 //
 // Collection: exits
@@ -82,12 +102,14 @@ rules_version = '2';
 // Document ID: {movementId}
 // Fields:
 //   - date: string (required, YYYY-MM-DD)
-//   - createdAt: string (required)
+//   - createdAt: string / timestamp
 //   - productId: string (required)
 //   - batchNumber: string (required)
 //   - type: string (required, 'Entrada' | 'Salida')
 //   - quantity: number (required, > 0)
 //   - user: string (required)
+//   - userId: string (required)
+//   - createdBy: string (required)
 //   - reference: string (required)
 //   - detail: string (required)
 //   - resultingStock: number (required, >= 0)
@@ -113,8 +135,28 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+    function userDocExists() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActiveUser() {
+      return userDocExists() && getUserData().status == 'Activo';
+    }
+
+    function hasRole(role) {
+      return isActiveUser() && getUserData().role == role;
+    }
+
+    function isBodega() {
+      return hasRole('BODEGA');
+    }
+
+    function isAdmin() {
+      return hasRole('ADMIN');
     }
 
     // ===============================================================
@@ -122,12 +164,12 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{userId} {
-      // Un usuario autenticado solo puede leer su propio perfil
-      allow read: if isOwner(userId);
+      // Un usuario autenticado solo puede leer su propio perfil, o un ADMIN activo puede leer cualquier perfil
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
 
       // Creación permitida solo por el propio usuario autenticado,
       // forzando siempre el rol BODEGA y status Activo (prevención de escalamiento de privilegios)
-      allow create: if isOwner(userId)
+      allow create: if isAuthenticated() && request.auth.uid == userId
         && request.resource.data.uid == userId
         && request.resource.data.email is string
         && request.resource.data.role == 'BODEGA'
@@ -135,7 +177,7 @@ service cloud.firestore {
 
       // Actualización permitida solo por el propio usuario autenticado,
       // garantizando la inmutabilidad de uid, role y status desde el cliente
-      allow update: if isOwner(userId)
+      allow update: if isAuthenticated() && request.auth.uid == userId
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.role == resource.data.role
         && request.resource.data.status == resource.data.status;
@@ -145,11 +187,11 @@ service cloud.firestore {
     }
 
     match /products/{productId} {
-      // Lectura permitida a usuarios autenticados
-      allow read: if isAuthenticated();
+      // Lectura permitida a usuarios autenticados con perfil activo
+      allow read: if isActiveUser();
 
-      // Creación permitida a usuarios autenticados con validaciones de campos requeridos
-      allow create: if isAuthenticated()
+      // Creación permitida únicamente a personal de BODEGA activo con saldo inicial en 0
+      allow create: if isBodega()
         && request.resource.data.code is string
         && request.resource.data.code.size() >= 2
         && request.resource.data.name is string
@@ -163,38 +205,59 @@ service cloud.firestore {
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.updatedBy == request.auth.uid;
 
-      // Actualización permitida garantizando inmutabilidad de createdAt y createdBy, y stock no negativo
-      allow update: if isAuthenticated()
-        && request.resource.data.code is string
-        && request.resource.data.name is string
-        && request.resource.data.name.size() >= 3
-        && request.resource.data.minStock is int
-        && request.resource.data.minStock >= 0
-        && request.resource.data.status in ['Activo', 'Inactivo']
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.currentStock is int
-        && request.resource.data.currentStock >= 0
-        && request.resource.data.updatedBy == request.auth.uid;
+      // Actualización permitida únicamente a personal de BODEGA activo.
+      // Se contemplan dos casos estrictos:
+      // Caso 1: Edición de catálogo -> currentStock es estrictamente inmutable.
+      // Caso 2: Operación de inventario -> metadatos de catálogo inmutables; solo varía currentStock (entero >= 0) y auditoría.
+      allow update: if isBodega() && (
+        // Caso 1: Actualización de datos de catálogo (stock congelado)
+        (
+          request.resource.data.code is string
+          && request.resource.data.name is string
+          && request.resource.data.name.size() >= 3
+          && request.resource.data.minStock is int
+          && request.resource.data.minStock >= 0
+          && request.resource.data.status in ['Activo', 'Inactivo']
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.createdBy == resource.data.createdBy
+          && request.resource.data.currentStock == resource.data.currentStock
+          && request.resource.data.updatedBy == request.auth.uid
+        )
+        ||
+        // Caso 2: Actualización de existencias por operación de inventario (metadatos congelados)
+        (
+          request.resource.data.code == resource.data.code
+          && request.resource.data.name == resource.data.name
+          && request.resource.data.category == resource.data.category
+          && request.resource.data.presentation == resource.data.presentation
+          && request.resource.data.minStock == resource.data.minStock
+          && request.resource.data.status == resource.data.status
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.createdBy == resource.data.createdBy
+          && request.resource.data.currentStock is int
+          && request.resource.data.currentStock >= 0
+          && request.resource.data.updatedBy == request.auth.uid
+        )
+      );
 
       // Prohibido eliminar productos físicamente para preservar integridad referencial e histórica
       allow delete: if false;
     }
 
     match /suppliers/{supplierId} {
-      // Lectura permitida a usuarios autenticados
-      allow read: if isAuthenticated();
+      // Lectura permitida a usuarios autenticados con perfil activo
+      allow read: if isActiveUser();
 
-      // Creación permitida a usuarios autenticados con validaciones de campos requeridos
-      allow create: if isAuthenticated()
+      // Creación permitida a BODEGA activo con validaciones de campos requeridos
+      allow create: if isBodega()
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 3
         && request.resource.data.status in ['Activo', 'Inactivo']
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.updatedBy == request.auth.uid;
 
-      // Actualización permitida garantizando inmutabilidad de createdAt y createdBy
-      allow update: if isAuthenticated()
+      // Actualización permitida a BODEGA activo garantizando inmutabilidad de createdAt y createdBy
+      allow update: if isBodega()
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 3
         && request.resource.data.status in ['Activo', 'Inactivo']
@@ -206,41 +269,23 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    match /batches/{batchId} {
-      // Lectura permitida a usuarios autenticados
-      allow read: if isAuthenticated();
-
-      // Creación permitida con campos requeridos y auditoría
-      allow create: if isAuthenticated()
-        && request.resource.data.productId is string
+    match /entryKeys/{key} {
+      // Clave determinística de reserva para prevención atómica de duplicados de factura por proveedor
+      allow read: if isActiveUser();
+      allow create: if isBodega()
         && request.resource.data.entryId is string
         && request.resource.data.supplierId is string
-        && request.resource.data.batchNumber is string
-        && request.resource.data.expiryDate is string
-        && request.resource.data.initialQuantity is int
-        && request.resource.data.initialQuantity > 0
-        && request.resource.data.quantity is int
-        && request.resource.data.quantity >= 0
+        && request.resource.data.documentNumber is string
         && request.resource.data.createdBy == request.auth.uid;
-
-      // Actualización atómica permitida manteniendo inmutabilidad del lote y cantidad no negativa
-      allow update: if isAuthenticated()
-        && request.resource.data.productId == resource.data.productId
-        && request.resource.data.batchNumber == resource.data.batchNumber
-        && request.resource.data.expiryDate == resource.data.expiryDate
-        && request.resource.data.quantity is int
-        && request.resource.data.quantity >= 0;
-
-      // Prohibido eliminar lotes físicamente
-      allow delete: if false;
+      allow update, delete: if false;
     }
 
     match /entries/{entryId} {
-      // Lectura permitida a usuarios autenticados
-      allow read: if isAuthenticated();
+      // Lectura permitida a usuarios autenticados con perfil activo
+      allow read: if isActiveUser();
 
-      // Creación permitida con documento, proveedor, auditoría e ítems
-      allow create: if isAuthenticated()
+      // Creación permitida a BODEGA activo con documento, proveedor, auditoría e ítems
+      allow create: if isBodega()
         && request.resource.data.documentNumber is string
         && request.resource.data.supplierId is string
         && request.resource.data.supplierName is string
@@ -251,24 +296,61 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /batches/{batchId} {
+      // Lectura permitida a usuarios autenticados con perfil activo
+      allow read: if isActiveUser();
+
+      // Creación permitida a BODEGA activo con campos requeridos y coherencia de cantidades
+      allow create: if isBodega()
+        && request.resource.data.productId is string
+        && request.resource.data.entryId is string
+        && request.resource.data.batchNumber is string
+        && request.resource.data.expiryDate is string
+        && request.resource.data.initialQuantity is int
+        && request.resource.data.initialQuantity > 0
+        && request.resource.data.quantity is int
+        && request.resource.data.quantity == request.resource.data.initialQuantity
+        && request.resource.data.status in ['Activo', 'Agotado']
+        && request.resource.data.createdBy == request.auth.uid;
+
+      // Actualización atómica permitida a BODEGA activo manteniendo inmutabilidad de lote y coherencia
+      allow update: if isBodega()
+        && request.resource.data.productId == resource.data.productId
+        && request.resource.data.batchNumber == resource.data.batchNumber
+        && request.resource.data.expiryDate == resource.data.expiryDate
+        && request.resource.data.initialQuantity is int
+        && request.resource.data.initialQuantity >= resource.data.initialQuantity
+        && request.resource.data.quantity is int
+        && request.resource.data.quantity >= 0
+        && request.resource.data.quantity <= request.resource.data.initialQuantity;
+
+      // Prohibido eliminar lotes físicamente
+      allow delete: if false;
+    }
+
     match /exits/{exitId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
+      allow read: if isActiveUser();
+      allow create: if isBodega();
       allow update, delete: if false;
     }
 
     match /movements/{movementId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated()
+      // Movimientos de auditoría Kardex append-only
+      allow read: if isActiveUser();
+      allow create: if isBodega()
+        && (request.resource.data.createdBy == request.auth.uid || request.resource.data.userId == request.auth.uid)
         && request.resource.data.type in ['Entrada', 'Salida']
+        && request.resource.data.productId is string
         && request.resource.data.quantity is int
-        && request.resource.data.quantity > 0;
+        && request.resource.data.quantity > 0
+        && request.resource.data.resultingStock is int
+        && request.resource.data.resultingStock >= 0;
       allow update, delete: if false;
     }
 
     match /settings/{docId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read: if isActiveUser();
+      allow write: if isAdmin();
     }
   }
 }

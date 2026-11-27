@@ -699,7 +699,44 @@ export function subscribeToBatches(
 }
 
 /**
+ * Normaliza un texto para claves de unicidad determinísticas:
+ * Trim, mayúsculas y reemplazo de caracteres no alfanuméricos por guion bajo.
+ */
+export function normalizeUniqueKey(text: string): string {
+  return text
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, '_');
+}
+
+/**
+ * Genera la clave de reserva única para una entrada:
+ * entryKeys/{supplierId}__{normalizedDocumentNumber}
+ */
+export function buildEntryReservationKey(supplierId: string, documentNumber: string): string {
+  const cleanSup = supplierId.trim().replace(/\//g, '_');
+  const cleanDoc = normalizeUniqueKey(documentNumber);
+  return `${cleanSup}__${cleanDoc}`;
+}
+
+/**
+ * Genera el identificador determinístico para un lote físico:
+ * batches/batch_{productId}__{normalizedBatchNumber}__{expiryDate}
+ */
+export function buildDeterministicBatchId(
+  productId: string,
+  batchNumber: string,
+  expiryDate: string
+): string {
+  const cleanProd = productId.trim().replace(/\//g, '_');
+  const cleanBatch = normalizeUniqueKey(batchNumber);
+  const cleanExp = expiryDate.trim().replace(/\//g, '_');
+  return `batch_${cleanProd}__${cleanBatch}__${cleanExp}`;
+}
+
+/**
  * Verifica si ya existe una entrada con el mismo número de documento para el mismo proveedor.
+ * Consulta primero la clave determinística de reserva (O(1)) y como fallback la colección entries.
  */
 export async function checkEntryDocumentExists(
   documentNumber: string,
@@ -707,11 +744,17 @@ export async function checkEntryDocumentExists(
 ): Promise<boolean> {
   if (!isFirebaseConfigured) return false;
   const cleanDoc = documentNumber.trim().toUpperCase();
+  const cleanSupplierId = supplierId.trim();
   try {
+    const key = buildEntryReservationKey(cleanSupplierId, cleanDoc);
+    const keySnap = await getDoc(doc(db, 'entryKeys', key));
+    if (keySnap.exists()) return true;
+
+    // Fallback retrocompatible para entradas previas
     const q = query(
       collection(db, 'entries'),
       where('documentNumber', '==', cleanDoc),
-      where('supplierId', '==', supplierId)
+      where('supplierId', '==', cleanSupplierId)
     );
     const snap = await getDocs(q);
     return !snap.empty;
@@ -723,6 +766,7 @@ export async function checkEntryDocumentExists(
 
 /**
  * Busca si existe un lote previo con exactamente el mismo productId, batchNumber y expiryDate.
+ * Consulta primero mediante su ID determinístico (O(1)) y como fallback por query.
  */
 export async function findExistingBatch(
   productId: string,
@@ -732,6 +776,17 @@ export async function findExistingBatch(
   if (!isFirebaseConfigured) return null;
   const cleanBatchNumber = batchNumber.trim().toUpperCase();
   try {
+    const detId = buildDeterministicBatchId(productId, cleanBatchNumber, expiryDate);
+    const detSnap = await getDoc(doc(db, 'batches', detId));
+    if (detSnap.exists()) {
+      return {
+        id: detSnap.id,
+        ref: detSnap.ref,
+        data: detSnap.data(),
+      };
+    }
+
+    // Fallback retrocompatible por query para lotes previos con auto-ID
     const q = query(
       collection(db, 'batches'),
       where('productId', '==', productId),
@@ -757,15 +812,17 @@ export async function findExistingBatch(
 /**
  * Registra una entrada de inventario de forma estrictamente atómica mediante runTransaction:
  * 1. Valida los campos de entrada y formato de ítems.
- * 2. Verifica la no duplicidad del documento para el proveedor dado.
+ * 2. Verifica la no duplicidad del documento para el proveedor dado dentro de la transacción.
  * 3. Valida existencia y estado 'Activo' del proveedor.
  * 4. Ejecuta runTransaction:
+ *    - Lectura previa de reserva atómica en entryKeys/{key}.
  *    - Lectura previa de todos los productos involucrados (verificando que existan y estén activos).
- *    - Lectura previa de lotes candidatos con la misma tripleta (productId, batchNumber, expiryDate).
+ *    - Lectura previa de lotes determinísticos candidatos (batch_{productId}__{batchNumber}__{expiryDate}).
+ *    - Creación de reserva atómica inmutable en entryKeys/{key}.
  *    - Creación del documento entries/{entryId} con snapshot histórico.
  *    - Creación o actualización (acumulación de cantidad) de batches/{batchId}.
- *    - Incremento atómico de products.currentStock.
- *    - Registro de auditoría Kardex en movements/{movementId}.
+ *    - Incremento atómico de products.currentStock con metadatos protegidos.
+ *    - Registro de auditoría Kardex append-only en movements/{movementId}.
  */
 export async function registerEntryFirestore(
   input: EntryInput,
@@ -813,16 +870,7 @@ export async function registerEntryFirestore(
   }
 
   try {
-    // 1. Verificar duplicidad de documento / proveedor
-    const isDuplicate = await checkEntryDocumentExists(cleanDoc, cleanSupplierId);
-    if (isDuplicate) {
-      return {
-        ok: false,
-        error: 'Ya existe una entrada registrada con este número de documento para el proveedor seleccionado.',
-      };
-    }
-
-    // 2. Obtener proveedor y validar estado Activo
+    // 1. Obtener proveedor y validar estado Activo previo a transacción
     const supplierRef = doc(db, 'suppliers', cleanSupplierId);
     const supplierSnap = await getDoc(supplierRef);
     if (!supplierSnap.exists()) {
@@ -834,35 +882,67 @@ export async function registerEntryFirestore(
     }
     const supplierName = supplierData.name || input.supplierName || 'Proveedor';
 
-    // 3. Pre-buscar candidatos de lotes existentes para leer dentro de la transacción
-    const candidateBatchesMap = new Map<string, { id: string; ref: any }>();
-    for (const item of input.items) {
-      const cleanBatch = item.batchNumber.trim().toUpperCase();
-      const key = `${item.productId}_${cleanBatch}_${item.expiryDate}`;
-      if (!candidateBatchesMap.has(key)) {
-        const found = await findExistingBatch(item.productId, cleanBatch, item.expiryDate);
-        if (found) {
-          candidateBatchesMap.set(key, { id: found.id, ref: found.ref });
-        }
-      }
-    }
-
-    // Calcular suma de cantidades agregadas por producto
-    const productQtyMap = new Map<string, number>();
-    for (const item of input.items) {
-      const current = productQtyMap.get(item.productId) || 0;
-      productQtyMap.set(item.productId, current + item.quantity);
-    }
-    const uniqueProductIds = Array.from(productQtyMap.keys());
-
-    // 4. Ejecutar Transacción Atómica
+    // 2. Preparar referencias determinísticas y agregados
+    const reservationKey = buildEntryReservationKey(cleanSupplierId, cleanDoc);
+    const reservationRef = doc(db, 'entryKeys', reservationKey);
     const entryRef = doc(collection(db, 'entries'));
     const nowIso = new Date().toISOString();
 
+    // Suma de cantidades agregadas por producto
+    const productQtyMap = new Map<string, number>();
+    // Lotes determinísticos únicos dentro de esta entrada (agrupando líneas repetidas si existieran)
+    const batchItemMap = new Map<
+      string,
+      {
+        productId: string;
+        batchNumber: string;
+        expiryDate: string;
+        totalQuantity: number;
+        batchDocId: string;
+        batchRef: any;
+      }
+    >();
+
+    for (const item of input.items) {
+      // Agrupación por producto
+      const current = productQtyMap.get(item.productId) || 0;
+      productQtyMap.set(item.productId, current + item.quantity);
+
+      // Agrupación por lote determinístico
+      const batchDocId = buildDeterministicBatchId(item.productId, item.batchNumber, item.expiryDate);
+      const existingBatchItem = batchItemMap.get(batchDocId);
+      if (existingBatchItem) {
+        existingBatchItem.totalQuantity += item.quantity;
+      } else {
+        batchItemMap.set(batchDocId, {
+          productId: item.productId,
+          batchNumber: item.batchNumber.trim(),
+          expiryDate: item.expiryDate,
+          totalQuantity: item.quantity,
+          batchDocId,
+          batchRef: doc(db, 'batches', batchDocId),
+        });
+      }
+    }
+
+    // 3. Ejecutar Transacción Atómica con Concurrencia Optimista
     const createdEntry = await runTransaction(db, async (tx) => {
-      // --- FASE DE LECTURAS ---
+      // ==============================================================
+      // FASE 1: TODAS LAS LECTURAS ATÓMICAS (tx.get)
+      // En Firestore Client SDK, todas las lecturas DEBEN preceder a las escrituras.
+      // ==============================================================
+
+      // 1.1 Verificar reserva atómica del documento (prevención de duplicados sin race condition)
+      const reservationSnap = await tx.get(reservationRef);
+      if (reservationSnap.exists()) {
+        throw new Error(
+          `Ya existe una entrada registrada con el número de documento "${cleanDoc}" para este proveedor.`
+        );
+      }
+
+      // 1.2 Leer productos involucrados
       const productDataMap = new Map<string, any>();
-      for (const prodId of uniqueProductIds) {
+      for (const prodId of productQtyMap.keys()) {
         const pRef = doc(db, 'products', prodId);
         const pSnap = await tx.get(pRef);
         if (!pSnap.exists()) {
@@ -875,16 +955,27 @@ export async function registerEntryFirestore(
         productDataMap.set(prodId, pData);
       }
 
-      const existingBatchDataMap = new Map<string, { id: string; ref: any; data: any }>();
-      for (const [key, candidate] of candidateBatchesMap.entries()) {
-        const bSnap = await tx.get(candidate.ref);
-        if (bSnap.exists()) {
-          existingBatchDataMap.set(key, { id: candidate.id, ref: candidate.ref, data: bSnap.data() });
-        }
+      // 1.3 Leer lotes determinísticos involucrados
+      const batchSnapMap = new Map<string, any>();
+      for (const [batchDocId, bItem] of batchItemMap.entries()) {
+        const bSnap = await tx.get(bItem.batchRef);
+        batchSnapMap.set(batchDocId, bSnap);
       }
 
-      // --- FASE DE ESCRITURAS ---
-      // 1) Crear documento entries/{entryId}
+      // ==============================================================
+      // FASE 2: TODAS LAS ESCRITURAS ATÓMICAS (tx.set / tx.update)
+      // ==============================================================
+
+      // 2.1 Crear reserva atómica del documento de entrada
+      tx.set(reservationRef, {
+        entryId: entryRef.id,
+        supplierId: cleanSupplierId,
+        documentNumber: cleanDoc,
+        createdAt: serverTimestamp(),
+        createdBy: userId,
+      });
+
+      // 2.2 Crear documento entries/{entryId} con snapshot histórico inmutable
       const normalizedItems: EntryItem[] = input.items.map((item, idx) => {
         const pData = productDataMap.get(item.productId);
         return {
@@ -913,56 +1004,40 @@ export async function registerEntryFirestore(
 
       tx.set(entryRef, entryDocData);
 
-      // 2) Actualizar o Crear Batches
-      const accumulatedBatchesInTx = new Map<string, { newInitial: number; newQty: number }>();
+      // 2.3 Crear o actualizar lotes determinísticos en batches/{batchDocId}
+      for (const [batchDocId, bItem] of batchItemMap.entries()) {
+        const bSnap = batchSnapMap.get(batchDocId);
+        if (bSnap && bSnap.exists()) {
+          const existingData = bSnap.data();
+          const prevInitial = typeof existingData.initialQuantity === 'number' ? existingData.initialQuantity : 0;
+          const prevQty = typeof existingData.quantity === 'number' ? existingData.quantity : 0;
+          const nextInitial = prevInitial + bItem.totalQuantity;
+          const nextQty = prevQty + bItem.totalQuantity;
 
-      for (const item of input.items) {
-        const cleanBatch = item.batchNumber.trim().toUpperCase();
-        const key = `${item.productId}_${cleanBatch}_${item.expiryDate}`;
-        const existingBatch = existingBatchDataMap.get(key);
-
-        if (existingBatch) {
-          const currentAccum = accumulatedBatchesInTx.get(key) || {
-            newInitial: existingBatch.data.initialQuantity || 0,
-            newQty: existingBatch.data.quantity || 0,
-          };
-          const nextInitial = currentAccum.newInitial + item.quantity;
-          const nextQty = currentAccum.newQty + item.quantity;
-          accumulatedBatchesInTx.set(key, { newInitial: nextInitial, newQty: nextQty });
-
-          tx.update(existingBatch.ref, {
+          tx.update(bItem.batchRef, {
             initialQuantity: nextInitial,
             quantity: nextQty,
-            status: getBatchExpiryStatus(item.expiryDate),
+            status: nextQty > 0 ? 'Activo' : 'Agotado',
             updatedAt: serverTimestamp(),
           });
         } else {
-          const newBatchRef = doc(collection(db, 'batches'));
-          tx.set(newBatchRef, {
-            productId: item.productId,
+          tx.set(bItem.batchRef, {
+            productId: bItem.productId,
             entryId: entryRef.id,
             supplierId: cleanSupplierId,
-            batchNumber: cleanBatch,
-            expiryDate: item.expiryDate,
-            initialQuantity: item.quantity,
-            quantity: item.quantity,
-            status: getBatchExpiryStatus(item.expiryDate),
+            batchNumber: bItem.batchNumber,
+            expiryDate: bItem.expiryDate,
+            initialQuantity: bItem.totalQuantity,
+            quantity: bItem.totalQuantity,
+            status: 'Activo',
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
             createdBy: userId,
           });
-
-          // Registrar en mapa en caso de que otra línea de la misma entrada tenga el mismo lote
-          existingBatchDataMap.set(key, {
-            id: newBatchRef.id,
-            ref: newBatchRef,
-            data: { initialQuantity: item.quantity, quantity: item.quantity },
-          });
-          accumulatedBatchesInTx.set(key, { newInitial: item.quantity, newQty: item.quantity });
         }
       }
 
-      // 3) Incrementar products.currentStock
+      // 2.4 Actualizar stock atómico en products/{productId} manteniendo metadatos congelados
       const runningStockMap = new Map<string, number>();
       for (const [prodId, addedQty] of productQtyMap.entries()) {
         const pData = productDataMap.get(prodId);
@@ -978,7 +1053,7 @@ export async function registerEntryFirestore(
         });
       }
 
-      // 4) Registrar movimientos Kardex tipo Entrada
+      // 2.5 Registrar movimientos Kardex append-only con auditoría
       for (let idx = 0; idx < input.items.length; idx++) {
         const item = input.items[idx];
         const movRef = doc(collection(db, 'movements'));
@@ -991,6 +1066,8 @@ export async function registerEntryFirestore(
           type: 'Entrada',
           quantity: item.quantity,
           user: userName,
+          userId,
+          createdBy: userId,
           reference: cleanDoc,
           detail: `Recepción de ${supplierName}`,
           resultingStock,
