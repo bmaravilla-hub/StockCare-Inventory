@@ -22,6 +22,10 @@ firebase-debug.log*
 # TypeScript y editores
 *.tsbuildinfo
 .vscode/
+
+# Agentes locales
+.agents/
+
 .idea/
 *.suo
 *.ntvs*
