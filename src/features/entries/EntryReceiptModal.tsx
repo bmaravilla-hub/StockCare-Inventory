@@ -82,63 +82,97 @@ export const EntryReceiptModal: React.FC<EntryReceiptModalProps> = ({
         </div>
 
         <div className="overflow-hidden rounded-lg border border-slate-200">
-          <table className="min-w-full divide-y divide-slate-200 text-xs">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="px-3 py-2.5 text-left font-semibold text-slate-600">
-                  Producto
-                </th>
-                <th className="px-3 py-2.5 text-left font-semibold text-slate-600">
-                  Lote
-                </th>
-                <th className="px-3 py-2.5 text-left font-semibold text-slate-600">
-                  Vencimiento
-                </th>
-                <th className="px-3 py-2.5 text-right font-semibold text-slate-600">
-                  Cantidad
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white">
-              {entry.items.map((item) => {
-                const product = products.find((p) => p.id === item.productId);
-                const displayName = item.productName || product?.name || 'Producto';
-                const displayCode = item.productCode || product?.code || '';
-                const displayPresentation = product?.presentation || '';
-                return (
-                  <tr key={item.id}>
-                    <td className="px-3 py-2.5">
-                      <p className="font-semibold text-slate-900">
-                        {displayName}
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        {displayCode}{displayPresentation ? ` • ${displayPresentation}` : ''}
-                      </p>
-                    </td>
-                    <td className="px-3 py-2.5 font-mono font-semibold text-slate-700">
-                      {item.batchNumber}
-                    </td>
-                    <td className="px-3 py-2.5 text-slate-700">
-                      {formatDateDisplay(item.expiryDate)}
-                    </td>
-                    <td className="px-3 py-2.5 text-right font-bold text-teal-700">
-                      +{item.quantity} uds.
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot className="bg-slate-50 font-semibold text-slate-900">
-              <tr>
-                <td colSpan={3} className="px-3 py-2.5 text-right">
-                  Total recibido ({entry.items.length} ítem(s)):
-                </td>
-                <td className="px-3 py-2.5 text-right text-teal-800">
-                  {totalUnits} unidades
-                </td>
-              </tr>
-            </tfoot>
-          </table>
+          {/* Vista móvil: tarjetas de ítems del comprobante */}
+          <div className="divide-y divide-slate-100 sm:hidden bg-white">
+            {entry.items.map((item) => {
+              const product = products.find((p) => p.id === item.productId);
+              const displayName = item.productName || product?.name || 'Producto';
+              const displayCode = item.productCode || product?.code || '';
+              const displayPresentation = product?.presentation || '';
+              return (
+                <div key={item.id} className="p-3 text-xs space-y-1.5">
+                  <div>
+                    <p className="font-semibold text-slate-900">{displayName}</p>
+                    <p className="text-[11px] text-slate-500">
+                      {displayCode}{displayPresentation ? ` • ${displayPresentation}` : ''}
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-700">
+                    <span>Lote: <strong className="font-mono">{item.batchNumber}</strong></span>
+                    <span className="font-bold text-teal-700">+{item.quantity} uds.</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Vence: {formatDateDisplay(item.expiryDate)}
+                  </p>
+                </div>
+              );
+            })}
+            <div className="bg-slate-50 p-3 text-xs font-semibold text-slate-900 flex justify-between items-center">
+              <span>Total recibido ({entry.items.length} ítems):</span>
+              <span className="text-teal-800 font-bold">{totalUnits} unidades</span>
+            </div>
+          </div>
+
+          {/* Vista escritorio: tabla compacta */}
+          <div className="hidden sm:block overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-xs">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="px-3 py-2.5 text-left font-semibold text-slate-600">
+                    Producto
+                  </th>
+                  <th className="px-3 py-2.5 text-left font-semibold text-slate-600">
+                    Lote
+                  </th>
+                  <th className="px-3 py-2.5 text-left font-semibold text-slate-600">
+                    Vencimiento
+                  </th>
+                  <th className="px-3 py-2.5 text-right font-semibold text-slate-600">
+                    Cantidad
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {entry.items.map((item) => {
+                  const product = products.find((p) => p.id === item.productId);
+                  const displayName = item.productName || product?.name || 'Producto';
+                  const displayCode = item.productCode || product?.code || '';
+                  const displayPresentation = product?.presentation || '';
+                  return (
+                    <tr key={item.id}>
+                      <td className="px-3 py-2.5">
+                        <p className="font-semibold text-slate-900">
+                          {displayName}
+                        </p>
+                        <p className="text-[11px] text-slate-500">
+                          {displayCode}{displayPresentation ? ` • ${displayPresentation}` : ''}
+                        </p>
+                      </td>
+                      <td className="px-3 py-2.5 font-mono font-semibold text-slate-700">
+                        {item.batchNumber}
+                      </td>
+                      <td className="px-3 py-2.5 text-slate-700">
+                        {formatDateDisplay(item.expiryDate)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-bold text-teal-700">
+                        +{item.quantity} uds.
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="bg-slate-50 font-semibold text-slate-900">
+                <tr>
+                  <td colSpan={3} className="px-3 py-2.5 text-right">
+                    Total recibido ({entry.items.length} ítem(s)):
+                  </td>
+                  <td className="px-3 py-2.5 text-right text-teal-800">
+                    {totalUnits} unidades
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         </div>
 
         {entry.notes && (

@@ -521,45 +521,69 @@ export const EntryCreatePage: React.FC = () => {
           </div>
 
           <div className="overflow-hidden rounded-lg border border-slate-200">
-            <table className="min-w-full divide-y divide-slate-200 text-xs">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-600">
-                    Producto
-                  </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-600">
-                    Lote
-                  </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-600">
-                    Vencimiento
-                  </th>
-                  <th className="px-3 py-2 text-right font-semibold text-slate-600">
-                    Cantidad
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {lines.map((l) => {
-                  const prod = products.find((p) => p.id === l.productId);
-                  return (
-                    <tr key={l.key}>
-                      <td className="px-3 py-2 font-medium text-slate-900">
-                        {prod?.code} — {prod?.name}
-                      </td>
-                      <td className="px-3 py-2 font-mono font-semibold text-slate-700">
-                        {l.batchNumber.trim().toUpperCase()}
-                      </td>
-                      <td className="px-3 py-2 text-slate-700">
-                        {formatDateDisplay(l.expiryDate)}
-                      </td>
-                      <td className="px-3 py-2 text-right font-bold text-teal-700">
-                        +{l.quantity} uds.
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            {/* Vista móvil: tarjetas de ítems */}
+            <div className="divide-y divide-slate-100 sm:hidden bg-white">
+              {lines.map((l) => {
+                const prod = products.find((p) => p.id === l.productId);
+                return (
+                  <div key={l.key} className="p-3 text-xs space-y-1.5">
+                    <p className="font-semibold text-slate-900">
+                      {prod?.code} — {prod?.name}
+                    </p>
+                    <div className="flex items-center justify-between text-slate-600">
+                      <span>Lote: <strong className="font-mono text-slate-800">{l.batchNumber.trim().toUpperCase()}</strong></span>
+                      <span className="font-bold text-teal-700">+{l.quantity} uds.</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Vence: {formatDateDisplay(l.expiryDate)}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Vista escritorio: tabla compacta */}
+            <div className="hidden sm:block overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-200 text-xs">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-600">
+                      Producto
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-600">
+                      Lote
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-600">
+                      Vencimiento
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-slate-600">
+                      Cantidad
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {lines.map((l) => {
+                    const prod = products.find((p) => p.id === l.productId);
+                    return (
+                      <tr key={l.key}>
+                        <td className="px-3 py-2 font-medium text-slate-900">
+                          {prod?.code} — {prod?.name}
+                        </td>
+                        <td className="px-3 py-2 font-mono font-semibold text-slate-700">
+                          {l.batchNumber.trim().toUpperCase()}
+                        </td>
+                        <td className="px-3 py-2 text-slate-700">
+                          {formatDateDisplay(l.expiryDate)}
+                        </td>
+                        <td className="px-3 py-2 text-right font-bold text-teal-700">
+                          +{l.quantity} uds.
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </Modal>

@@ -119,49 +119,81 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             </div>
           ) : (
             <div className="overflow-hidden rounded-lg border border-slate-200">
-              <table className="min-w-full divide-y divide-slate-200 text-xs">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-600">
-                      Número de lote
-                    </th>
-                    <th className="px-3 py-2 text-right font-semibold text-slate-600">
-                      Existencia
-                    </th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-600">
-                      Vencimiento
-                    </th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-600">
-                      Estado
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {summary.batches.map((b) => {
-                    const st = getBatchExpiryStatus(b.expiryDate, alertThresholdDays);
-                    const days = diffDaysFromToday(b.expiryDate);
-                    return (
-                      <tr key={b.id}>
-                        <td className="px-3 py-2.5 font-mono font-semibold text-slate-800">
+              {/* Vista móvil: tarjetas de lotes */}
+              <div className="divide-y divide-slate-100 sm:hidden bg-white">
+                {summary.batches.map((b) => {
+                  const st = getBatchExpiryStatus(b.expiryDate, alertThresholdDays);
+                  const days = diffDaysFromToday(b.expiryDate);
+                  return (
+                    <div key={b.id} className="p-3 text-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono font-bold text-slate-800 text-sm">
                           {b.batchNumber}
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-semibold text-slate-900">
+                        </span>
+                        <span className="font-bold text-slate-900">
                           {b.quantity} uds.
-                        </td>
-                        <td className="px-3 py-2.5 text-slate-600">
-                          {formatDateDisplay(b.expiryDate)}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <BatchStatusBadge
-                            status={st}
-                            labelOverride={getExpiryStatusLabel(st, days)}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500 text-[11px]">
+                          Vence: {formatDateDisplay(b.expiryDate)}
+                        </span>
+                        <BatchStatusBadge
+                          status={st}
+                          labelOverride={getExpiryStatusLabel(st, days)}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Vista escritorio: tabla */}
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200 text-xs">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-semibold text-slate-600">
+                        Número de lote
+                      </th>
+                      <th className="px-3 py-2 text-right font-semibold text-slate-600">
+                        Existencia
+                      </th>
+                      <th className="px-3 py-2 text-left font-semibold text-slate-600">
+                        Vencimiento
+                      </th>
+                      <th className="px-3 py-2 text-left font-semibold text-slate-600">
+                        Estado
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {summary.batches.map((b) => {
+                      const st = getBatchExpiryStatus(b.expiryDate, alertThresholdDays);
+                      const days = diffDaysFromToday(b.expiryDate);
+                      return (
+                        <tr key={b.id}>
+                          <td className="px-3 py-2.5 font-mono font-semibold text-slate-800">
+                            {b.batchNumber}
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-semibold text-slate-900">
+                            {b.quantity} uds.
+                          </td>
+                          <td className="px-3 py-2.5 text-slate-600">
+                            {formatDateDisplay(b.expiryDate)}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <BatchStatusBadge
+                              status={st}
+                              labelOverride={getExpiryStatusLabel(st, days)}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>

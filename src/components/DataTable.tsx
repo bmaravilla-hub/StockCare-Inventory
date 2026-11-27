@@ -88,8 +88,24 @@ export function DataTable<T>({
 
   if (isLoading) {
     return (
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-        <div className="divide-y divide-slate-100 p-4">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs">
+        {/* Esqueleto de tarjetas en móvil */}
+        <div className="divide-y divide-slate-100 p-4 md:hidden space-y-3">
+          {Array.from({ length: 3 }).map((_, idx) => (
+            <div key={idx} className="space-y-2.5 py-2 animate-pulse">
+              <div className="flex justify-between items-center">
+                <div className="h-3.5 w-20 rounded bg-slate-200" />
+                <div className="h-3.5 w-32 rounded bg-slate-200" />
+              </div>
+              <div className="flex justify-between items-center">
+                <div className="h-3.5 w-24 rounded bg-slate-200" />
+                <div className="h-5 w-20 rounded-full bg-slate-200" />
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* Esqueleto de filas en escritorio */}
+        <div className="hidden md:block divide-y divide-slate-100 p-4">
           {Array.from({ length: 5 }).map((_, idx) => (
             <div key={idx} className="flex items-center gap-4 py-3.5 animate-pulse">
               <div className="h-4 w-24 rounded bg-slate-200" />
@@ -145,7 +161,41 @@ export function DataTable<T>({
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs">
-      <div className="overflow-x-auto">
+      {/* Vista móvil: Tarjetas apiladas (visible solo en pantallas menores a md) */}
+      <div className="divide-y divide-slate-100 md:hidden bg-white">
+        {paginatedData.map((row) => (
+          <div
+            key={rowKey(row)}
+            onClick={onRowClick ? () => onRowClick(row) : undefined}
+            className={`p-4 transition-colors space-y-2.5 ${
+              onRowClick
+                ? 'cursor-pointer hover:bg-teal-50/40 active:bg-teal-50'
+                : 'hover:bg-slate-50/60'
+            }`}
+          >
+            {columns.map((col) => (
+              <div
+                key={col.key}
+                className="flex items-start justify-between gap-3 text-sm py-1 border-b border-slate-50 last:border-0"
+              >
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 shrink-0 mt-0.5">
+                  {col.header}
+                </span>
+                <div
+                  className={`text-slate-800 ${
+                    col.align === 'right' ? 'text-right' : 'text-right'
+                  }`}
+                >
+                  {col.render(row)}
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {/* Vista de escritorio: Tabla tradicional (oculta en móviles, visible en md+) */}
+      <div className="hidden md:block overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
           {caption && <caption className="sr-only">{caption}</caption>}
           <thead className="bg-slate-50">
@@ -200,16 +250,16 @@ export function DataTable<T>({
 
       {enablePagination && data.length > 0 && (
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/80 px-4 py-3 text-xs text-slate-600">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-between sm:justify-start w-full sm:w-auto gap-2.5">
             <span>
               Mostrando <strong className="font-semibold text-slate-900">{data.length === 0 ? 0 : startIndex + 1}</strong> a{' '}
               <strong className="font-semibold text-slate-900">{endIndex}</strong> de{' '}
               <strong className="font-semibold text-slate-900">{data.length}</strong> registros
             </span>
 
-            <div className="flex items-center gap-1.5 pl-2 border-l border-slate-300">
+            <div className="flex items-center gap-1.5 pl-2 sm:border-l sm:border-slate-300">
               <label htmlFor="pageSizeSelect" className="text-slate-500 whitespace-nowrap">
-                Filas por página:
+                Filas:
               </label>
               <select
                 id="pageSizeSelect"
@@ -229,7 +279,7 @@ export function DataTable<T>({
             </div>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center justify-center w-full sm:w-auto gap-1">
             <button
               type="button"
               onClick={() => setCurrentPage(1)}
