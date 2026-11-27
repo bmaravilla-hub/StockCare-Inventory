@@ -8,7 +8,7 @@ import { Select } from '../components/Select';
 import { DataTable, type TableColumn } from '../components/DataTable';
 import { ProductStatusBadge, StockLevelBadge } from '../components/Badge';
 import { ProductDetailModal } from '../features/products/ProductDetailModal';
-import { PRODUCT_CATEGORIES } from '../data/mockData';
+import { PRODUCT_CATEGORIES } from '../constants';
 import { useStockCare } from '../hooks/useStockCare';
 import type { Product } from '../types';
 import { getProductStockSummary } from '../utils/inventory';
@@ -165,7 +165,7 @@ export const ProductsListPage: React.FC = () => {
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
             placeholder="Todas las categorías"
-            options={PRODUCT_CATEGORIES.map((c) => ({ value: c, label: c }))}
+            options={PRODUCT_CATEGORIES.map((c: string) => ({ value: c, label: c }))}
             aria-label="Filtrar por categoría"
           />
         </div>

@@ -5,7 +5,7 @@ import { Select } from '../../components/Select';
 import { Button } from '../../components/Button';
 import { Alert } from '../../components/Alert';
 import { ConfirmModal } from '../../components/Modal';
-import { PRODUCT_CATEGORIES } from '../../data/mockData';
+import { PRODUCT_CATEGORIES } from '../../constants';
 import type { ProductStatus } from '../../types';
 import type { ProductInput } from '../../services/StockCareContext';
 

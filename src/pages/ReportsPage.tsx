@@ -19,7 +19,7 @@ import {
   MovementTypeBadge,
   StockLevelBadge,
 } from '../components/Badge';
-import { PRODUCT_CATEGORIES } from '../data/mockData';
+import { PRODUCT_CATEGORIES } from '../constants';
 import { useStockCare } from '../hooks/useStockCare';
 import { diffDaysFromToday, formatDateDisplay, getTodayLocalISO } from '../utils/date';
 import { exportToCsv } from '../utils/exportCsv';
