@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -9,6 +9,7 @@ import {
   Boxes,
   CalendarClock,
   FileBarChart2,
+  Loader2,
   Pill,
 } from 'lucide-react';
 import { PageHeader } from '../components/PageHeader';
@@ -23,6 +24,7 @@ import {
   getExpiryStatusLabel,
   getInventoryAlerts,
 } from '../utils/inventory';
+import type { EntryRecord, ExitRecord, MovementRecord } from '../types';
 
 interface ExpiringBatchRow {
   id: string;
@@ -35,16 +37,58 @@ interface ExpiringBatchRow {
   status: 'Vigente' | 'ProximoAVencer' | 'Vencido';
 }
 
+type RecentActivityTab = 'movements' | 'entries' | 'exits';
+
 export const DashboardPage: React.FC = () => {
-  const { session, products, batches, movements, settings } = useStockCare();
+  const {
+    session,
+    products,
+    batches,
+    movements,
+    entries,
+    exits,
+    settings,
+    isLoadingProducts,
+    isBatchesLoading,
+    isMovementsLoading,
+    isEntriesLoading,
+    isExitsLoading,
+    productsError,
+    batchesError,
+    movementsError,
+    entriesError,
+    exitsError,
+  } = useStockCare();
+
+  const [activityTab, setActivityTab] = useState<RecentActivityTab>('movements');
 
   const isBodega = session?.role === 'BODEGA';
   const isAdmin = session?.role === 'ADMIN';
 
+  const isLoading =
+    isLoadingProducts ||
+    isBatchesLoading ||
+    isMovementsLoading ||
+    isEntriesLoading ||
+    isExitsLoading;
+
+  const loadError =
+    productsError ||
+    batchesError ||
+    movementsError ||
+    entriesError ||
+    exitsError;
+
   const metrics = useMemo(() => {
     const activeProducts = products.filter((p) => p.status === 'Activo');
-    const totalUnits = batches.reduce((sum, b) => sum + b.quantity, 0);
 
+    // Existencia total: suma de currentStock de productos activos
+    const totalUnits = activeProducts.reduce(
+      (sum, p) => sum + (typeof p.currentStock === 'number' ? p.currentStock : 0),
+      0
+    );
+
+    // Alertas centralizadas (exactamente igual a AlertsPage)
     const alerts = getInventoryAlerts(products, batches, settings.expiryAlertDays);
 
     const expiringBatches: ExpiringBatchRow[] = [
@@ -70,18 +114,35 @@ export const DashboardPage: React.FC = () => {
       })),
     ].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
 
+    // Actividades recientes ordenadas por fecha/creación descendente
+    const recentMovements = [...movements]
+      .sort((a, b) => (b.createdAt || b.date).localeCompare(a.createdAt || a.date))
+      .slice(0, 5);
+
+    const recentEntries = [...entries]
+      .sort((a, b) => (b.createdAt || b.date).localeCompare(a.createdAt || a.date))
+      .slice(0, 5);
+
+    const recentExits = [...exits]
+      .sort((a, b) => (b.createdAt || b.date).localeCompare(a.createdAt || a.date))
+      .slice(0, 5);
+
     return {
       totalRegisteredProducts: products.length,
       activeProductsCount: activeProducts.length,
       totalUnits,
-      lowStockCount: alerts.outOfStockProducts.length + alerts.lowStockProducts.length,
-      expiringBatches,
+      outOfStockCount: alerts.outOfStockProducts.length,
+      lowStockCount: alerts.lowStockProducts.length,
       expiredCount: alerts.expiredBatches.length,
       soonCount: alerts.expiringSoonBatches.length,
-      recentMovements: movements.slice(0, 6),
+      expiringBatches,
+      recentMovements,
+      recentEntries,
+      recentExits,
     };
-  }, [products, batches, movements, settings.expiryAlertDays]);
+  }, [products, batches, movements, entries, exits, settings.expiryAlertDays]);
 
+  // Columnas para tabla de lotes críticos (próximos a vencer y vencidos)
   const expiringColumns: TableColumn<ExpiringBatchRow>[] = [
     {
       key: 'product',
@@ -125,7 +186,8 @@ export const DashboardPage: React.FC = () => {
     },
   ];
 
-  const movementColumns: TableColumn<(typeof metrics.recentMovements)[number]>[] = [
+  // Columnas para Movimientos recientes (Kardex)
+  const movementColumns: TableColumn<MovementRecord>[] = [
     {
       key: 'date',
       header: 'Fecha',
@@ -140,11 +202,10 @@ export const DashboardPage: React.FC = () => {
       header: 'Producto',
       render: (row) => {
         const prod = products.find((p) => p.id === row.productId);
+        const name = row.productName || prod?.name || 'Producto';
         return (
           <div>
-            <p className="font-medium text-slate-900 text-xs sm:text-sm">
-              {prod?.name ?? 'Producto'}
-            </p>
+            <p className="font-medium text-slate-900 text-xs sm:text-sm">{name}</p>
             <p className="text-[11px] text-slate-500">Lote: {row.batchNumber}</p>
           </div>
         );
@@ -175,6 +236,102 @@ export const DashboardPage: React.FC = () => {
       align: 'right',
       render: (row) => (
         <span className="font-semibold text-slate-800">{row.resultingStock}</span>
+      ),
+    },
+  ];
+
+  // Columnas para Entradas recientes
+  const entryColumns: TableColumn<EntryRecord>[] = [
+    {
+      key: 'date',
+      header: 'Fecha',
+      render: (row) => (
+        <span className="text-xs font-medium text-slate-600">
+          {formatDateDisplay(row.date)}
+        </span>
+      ),
+    },
+    {
+      key: 'doc',
+      header: 'Documento',
+      render: (row) => (
+        <span className="font-mono text-xs font-bold text-slate-800">
+          {row.documentNumber}
+        </span>
+      ),
+    },
+    {
+      key: 'supplier',
+      header: 'Proveedor',
+      render: (row) => (
+        <span className="text-xs font-medium text-slate-700">
+          {row.supplierName || row.provider}
+        </span>
+      ),
+    },
+    {
+      key: 'units',
+      header: 'Unidades',
+      align: 'right',
+      render: (row) => {
+        const units = row.items?.reduce((s, i) => s + (i.quantity || 0), 0) || 0;
+        return <span className="font-semibold text-teal-700">+{units} uds.</span>;
+      },
+    },
+    {
+      key: 'user',
+      header: 'Registrado por',
+      render: (row) => (
+        <span className="text-xs text-slate-500">{row.registeredBy}</span>
+      ),
+    },
+  ];
+
+  // Columnas para Salidas recientes
+  const exitColumns: TableColumn<ExitRecord>[] = [
+    {
+      key: 'date',
+      header: 'Fecha',
+      render: (row) => (
+        <span className="text-xs font-medium text-slate-600">
+          {formatDateDisplay(row.date)}
+        </span>
+      ),
+    },
+    {
+      key: 'product',
+      header: 'Producto',
+      render: (row) => {
+        const prod = products.find((p) => p.id === row.productId);
+        const name = row.productName || prod?.name || 'Producto';
+        return (
+          <div>
+            <p className="font-medium text-slate-900 text-xs sm:text-sm">{name}</p>
+            <p className="text-[11px] text-slate-500 font-mono">Lote: {row.batchNumber}</p>
+          </div>
+        );
+      },
+    },
+    {
+      key: 'quantity',
+      header: 'Cantidad',
+      align: 'right',
+      render: (row) => (
+        <span className="font-semibold text-amber-700">-{row.quantity} uds.</span>
+      ),
+    },
+    {
+      key: 'reason',
+      header: 'Motivo',
+      render: (row) => (
+        <span className="text-xs text-slate-700">{row.reason}</span>
+      ),
+    },
+    {
+      key: 'user',
+      header: 'Responsable',
+      render: (row) => (
+        <span className="text-xs text-slate-500">{row.registeredBy}</span>
       ),
     },
   ];
@@ -231,7 +388,23 @@ export const DashboardPage: React.FC = () => {
         }
       />
 
-      {metrics.expiredCount > 0 && (
+      {/* Indicador de carga inicial */}
+      {isLoading && (
+        <div className="mb-6 flex items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white p-6 text-slate-500 shadow-2xs">
+          <Loader2 className="h-5 w-5 animate-spin text-[#0E3B66]" />
+          <span className="text-sm font-medium">Sincronizando panel con Firestore...</span>
+        </div>
+      )}
+
+      {/* Manejo de error de sincronización */}
+      {loadError && (
+        <Alert variant="error" title="Error de sincronización con Firestore" className="mb-6">
+          {loadError}
+        </Alert>
+      )}
+
+      {/* Alerta de lotes vencidos */}
+      {!isLoading && metrics.expiredCount > 0 && (
         <Alert
           variant="error"
           title="Atención prioritaria: existen lotes vencidos en inventario"
@@ -250,11 +423,11 @@ export const DashboardPage: React.FC = () => {
         </Alert>
       )}
 
-      {/* Tarjetas de métricas */}
+      {/* Tarjetas de métricas principales */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5 mb-6">
         <MetricCard
           title="Productos registrados"
-          value={metrics.totalRegisteredProducts}
+          value={isLoading ? '-' : metrics.totalRegisteredProducts}
           subtitle={`${metrics.activeProductsCount} activos en catálogo`}
           icon={<Pill className="h-5 w-5" />}
           accent="teal"
@@ -262,31 +435,31 @@ export const DashboardPage: React.FC = () => {
         />
         <MetricCard
           title="Unidades en inventario"
-          value={metrics.totalUnits}
-          subtitle="Existencia física total"
+          value={isLoading ? '-' : metrics.totalUnits}
+          subtitle="Existencia física activa"
           icon={<Boxes className="h-5 w-5" />}
           accent="emerald"
           to="/inventario"
         />
         <MetricCard
           title="Stock bajo / agotado"
-          value={metrics.lowStockCount}
-          subtitle="Requieren reposición"
+          value={isLoading ? '-' : metrics.lowStockCount + metrics.outOfStockCount}
+          subtitle={`${metrics.outOfStockCount} agotados • ${metrics.lowStockCount} con stock bajo`}
           icon={<AlertTriangle className="h-5 w-5" />}
-          accent={metrics.lowStockCount > 0 ? 'amber' : 'slate'}
-          to="/inventario?nivel=bajo"
+          accent={metrics.lowStockCount + metrics.outOfStockCount > 0 ? 'amber' : 'slate'}
+          to="/alertas"
         />
         <MetricCard
           title="Próximos a vencer"
-          value={metrics.soonCount + metrics.expiredCount}
+          value={isLoading ? '-' : metrics.soonCount + metrics.expiredCount}
           subtitle={`${metrics.expiredCount} vencido(s) • ${metrics.soonCount} por vencer`}
           icon={<CalendarClock className="h-5 w-5" />}
           accent={metrics.expiredCount > 0 ? 'rose' : 'amber'}
           to="/alertas"
         />
         <MetricCard
-          title="Movimientos recientes"
-          value={movements.length}
+          title="Movimientos Kardex"
+          value={isLoading ? '-' : movements.length}
           subtitle="Trazabilidad entrada/salida"
           icon={<ArrowLeftRight className="h-5 w-5" />}
           accent="slate"
@@ -359,6 +532,7 @@ export const DashboardPage: React.FC = () => {
 
       {/* Tablas del Dashboard */}
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        {/* Tabla 1: Lotes próximos a vencer y vencidos */}
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <div>
@@ -370,52 +544,141 @@ export const DashboardPage: React.FC = () => {
               </p>
             </div>
             <Link
-              to="/lotes"
+              to="/alertas"
               className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:text-teal-800"
             >
-              Ver todos los lotes
+              Ver todas las alertas
               <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
 
           <DataTable
             columns={expiringColumns}
-            data={metrics.expiringBatches.slice(0, 6)}
+            data={metrics.expiringBatches.slice(0, 5)}
             rowKey={(r) => r.id}
+            isLoading={isLoading}
             emptyTitle="Sin lotes próximos a vencer"
             emptyDescription="Todos los lotes con existencias cuentan con fecha de vencimiento vigente."
           />
         </section>
 
+        {/* Tabla 2: Actividad operativa reciente con pestañas */}
         <section className="space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-base font-bold text-slate-900">
-                Últimos movimientos registrados
+                Actividad operativa reciente
               </h2>
               <p className="text-xs text-slate-500">
-                Entradas y salidas recientes con existencia resultante
+                Últimas transacciones registradas en tiempo real
               </p>
             </div>
-            <Link
-              to="/movimientos"
-              className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:text-teal-800"
-            >
-              Ver historial completo
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
+
+            {/* Selector de pestaña para actividad reciente */}
+            <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setActivityTab('movements')}
+                className={`rounded-md px-2.5 py-1 font-semibold transition-colors ${
+                  activityTab === 'movements'
+                    ? 'bg-white text-teal-800 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Movimientos
+              </button>
+              <button
+                type="button"
+                onClick={() => setActivityTab('entries')}
+                className={`rounded-md px-2.5 py-1 font-semibold transition-colors ${
+                  activityTab === 'entries'
+                    ? 'bg-white text-teal-800 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Entradas
+              </button>
+              <button
+                type="button"
+                onClick={() => setActivityTab('exits')}
+                className={`rounded-md px-2.5 py-1 font-semibold transition-colors ${
+                  activityTab === 'exits'
+                    ? 'bg-white text-teal-800 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Salidas
+              </button>
+            </div>
           </div>
 
-          <DataTable
-            columns={movementColumns}
-            data={metrics.recentMovements}
-            rowKey={(r) => r.id}
-            emptyTitle="Sin movimientos registrados"
-            emptyDescription="Aún no se han registrado entradas ni salidas."
-          />
+          {activityTab === 'movements' && (
+            <div>
+              <DataTable
+                columns={movementColumns}
+                data={metrics.recentMovements}
+                rowKey={(r) => r.id}
+                isLoading={isLoading}
+                emptyTitle="No hay movimientos registrados"
+                emptyDescription="Aún no se han registrado transacciones de inventario."
+              />
+              <div className="mt-2 text-right">
+                <Link
+                  to="/movimientos"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:text-teal-800"
+                >
+                  Ver Kardex completo
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
+            </div>
+          )}
+
+          {activityTab === 'entries' && (
+            <div>
+              <DataTable
+                columns={entryColumns}
+                data={metrics.recentEntries}
+                rowKey={(r) => r.id}
+                isLoading={isLoading}
+                emptyTitle="No hay entradas registradas"
+                emptyDescription="Aún no se han recibido recepciones de inventario."
+              />
+              <div className="mt-2 text-right">
+                <Link
+                  to="/entradas"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:text-teal-800"
+                >
+                  Ver historial de entradas
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
+            </div>
+          )}
+
+          {activityTab === 'exits' && (
+            <div>
+              <DataTable
+                columns={exitColumns}
+                data={metrics.recentExits}
+                rowKey={(r) => r.id}
+                isLoading={isLoading}
+                emptyTitle="No hay salidas registradas"
+                emptyDescription="Aún no se han registrado despachos ni salidas de mercadería."
+              />
+              <div className="mt-2 text-right">
+                <Link
+                  to="/salidas"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:text-teal-800"
+                >
+                  Ver historial de salidas
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
+            </div>
+          )}
         </section>
       </div>
     </div>
   );
 };
-
