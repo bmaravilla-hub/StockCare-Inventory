@@ -1,21 +1,19 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Bell, Menu, ShieldCheck, UserCircle2 } from 'lucide-react';
 import { useStockCare } from '../hooks/useStockCare';
-import { getBatchExpiryStatus } from '../utils/inventory';
+import { getInventoryAlerts } from '../utils/inventory';
 
 interface TopbarProps {
   onOpenSidebar: () => void;
 }
 
 export const Topbar: React.FC<TopbarProps> = ({ onOpenSidebar }) => {
-  const { session, settings, batches } = useStockCare();
+  const { session, settings, batches, products } = useStockCare();
 
-  const expiryAlerts = batches.filter((b) => {
-    if (b.quantity <= 0) return false;
-    const status = getBatchExpiryStatus(b.expiryDate, settings.expiryAlertDays);
-    return status === 'Vencido' || status === 'ProximoAVencer';
-  }).length;
+  const { totalAlerts } = useMemo(() => {
+    return getInventoryAlerts(products, batches, settings.expiryAlertDays);
+  }, [products, batches, settings.expiryAlertDays]);
 
   return (
     <header className="sticky top-3 z-20 flex items-center justify-between px-4 pt-3 sm:px-6 lg:px-8 lg:justify-end pointer-events-none no-print">
@@ -36,9 +34,9 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenSidebar }) => {
         >
           <Bell className="h-4 w-4 text-amber-600" />
           <span className="hidden md:inline">Alertas</span>
-          {expiryAlerts > 0 && (
+          {totalAlerts > 0 && (
             <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-600 px-1.5 text-[11px] font-bold text-white">
-              {expiryAlerts}
+              {totalAlerts}
             </span>
           )}
         </Link>

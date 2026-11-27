@@ -82,3 +82,132 @@ export function getProductStockSummary(
   };
 }
 
+export interface ExpiredBatchAlert {
+  id: string;
+  productId: string;
+  productCode: string;
+  productName: string;
+  batchNumber: string;
+  quantity: number;
+  expiryDate: string;
+  daysRemaining: number;
+}
+
+export interface ExpiringSoonBatchAlert {
+  id: string;
+  productId: string;
+  productCode: string;
+  productName: string;
+  batchNumber: string;
+  quantity: number;
+  expiryDate: string;
+  daysRemaining: number;
+}
+
+export interface OutOfStockProductAlert {
+  product: Product;
+  currentStock: number;
+  minStock: number;
+}
+
+export interface LowStockProductAlert {
+  product: Product;
+  currentStock: number;
+  minStock: number;
+}
+
+export interface InventoryAlertsSummary {
+  expiredBatches: ExpiredBatchAlert[];
+  outOfStockProducts: OutOfStockProductAlert[];
+  lowStockProducts: LowStockProductAlert[];
+  expiringSoonBatches: ExpiringSoonBatchAlert[];
+  totalAlerts: number;
+}
+
+/**
+ * Calcula de manera centralizada y reactiva todas las alertas operativas del inventario:
+ * Prioridad 1: Lotes vencidos con existencia física (expiryDate < hoy && quantity > 0)
+ * Prioridad 2: Productos activos agotados (status == 'Activo' && currentStock == 0)
+ * Prioridad 3: Productos activos con stock bajo (status == 'Activo' && currentStock > 0 && currentStock <= minStock)
+ * Prioridad 4: Lotes próximos a vencer con existencia física (expiryDate >= hoy && expiryDate <= threshold && quantity > 0)
+ *
+ * Reglas de negocio:
+ * - Lotes agotados (quantity == 0) NO alertan vencimiento.
+ * - Productos inactivos (status == 'Inactivo') NO generan alertas de existencias.
+ */
+export function getInventoryAlerts(
+  products: Product[],
+  batches: Batch[],
+  alertThresholdDays = 60
+): InventoryAlertsSummary {
+  const expiredBatches: ExpiredBatchAlert[] = [];
+  const expiringSoonBatches: ExpiringSoonBatchAlert[] = [];
+
+  // 1. Evaluar lotes con existencia física > 0
+  for (const b of batches) {
+    if (b.quantity <= 0) continue;
+    const days = diffDaysFromToday(b.expiryDate);
+    const prod = products.find((p) => p.id === b.productId);
+    const item = {
+      id: b.id,
+      productId: b.productId,
+      productCode: prod?.code ?? 'N/A',
+      productName: prod?.name ?? 'Producto',
+      batchNumber: b.batchNumber,
+      quantity: b.quantity,
+      expiryDate: b.expiryDate,
+      daysRemaining: days,
+    };
+
+    if (days < 0) {
+      expiredBatches.push(item);
+    } else if (days <= alertThresholdDays) {
+      expiringSoonBatches.push(item);
+    }
+  }
+
+  // Ordenar lotes: más vencidos o próximos a vencer primero
+  expiredBatches.sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
+  expiringSoonBatches.sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
+
+  // 2. Evaluar productos activos (los inactivos NO generan alertas operativas)
+  const activeProducts = products.filter((p) => p.status === 'Activo');
+  const outOfStockProducts: OutOfStockProductAlert[] = [];
+  const lowStockProducts: LowStockProductAlert[] = [];
+
+  for (const p of activeProducts) {
+    const stock = typeof p.currentStock === 'number' ? p.currentStock : getProductTotalStock(p.id, batches);
+    if (stock === 0) {
+      outOfStockProducts.push({
+        product: p,
+        currentStock: 0,
+        minStock: p.minStock,
+      });
+    } else if (stock <= p.minStock) {
+      lowStockProducts.push({
+        product: p,
+        currentStock: stock,
+        minStock: p.minStock,
+      });
+    }
+  }
+
+  // Ordenar productos: alfabéticamente por código y nombre
+  outOfStockProducts.sort((a, b) => a.product.name.localeCompare(b.product.name));
+  lowStockProducts.sort((a, b) => a.product.name.localeCompare(b.product.name));
+
+  const totalAlerts =
+    expiredBatches.length +
+    outOfStockProducts.length +
+    lowStockProducts.length +
+    expiringSoonBatches.length;
+
+  return {
+    expiredBatches,
+    outOfStockProducts,
+    lowStockProducts,
+    expiringSoonBatches,
+    totalAlerts,
+  };
+}
+

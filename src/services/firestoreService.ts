@@ -1165,15 +1165,20 @@ export async function registerEntryFirestore(
         });
       }
 
-      // 2.5 Registrar movimientos Kardex append-only con auditoría
+      // 2.5 Registrar movimientos Kardex append-only con auditoría y snapshot histórico
       for (let idx = 0; idx < input.items.length; idx++) {
         const item = input.items[idx];
+        const pData = productDataMap.get(item.productId);
         const movRef = doc(collection(db, 'movements'));
         const resultingStock = runningStockMap.get(item.productId) || 0;
+        const batchDocId = `batch_${item.productId}__${normalizeUniqueKey(item.batchNumber)}__${item.expiryDate}`;
         tx.set(movRef, {
           date: cleanDate,
           createdAt: serverTimestamp(),
           productId: item.productId,
+          productCode: pData?.code || '',
+          productName: pData?.name || '',
+          batchId: batchDocId,
           batchNumber: item.batchNumber.trim().toUpperCase(),
           type: 'Entrada',
           quantity: item.quantity,

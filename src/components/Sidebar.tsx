@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { StockCareLogo } from './StockCareLogo';
 import { useStockCare } from '../hooks/useStockCare';
-import { getBatchExpiryStatus, getProductStockSummary } from '../utils/inventory';
+import { getInventoryAlerts } from '../utils/inventory';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -35,19 +35,9 @@ interface NavItem {
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const { session, logout, batches, products, settings } = useStockCare();
 
-  const expiryAlertsCount = batches.filter((b) => {
-    if (b.quantity <= 0) return false;
-    const status = getBatchExpiryStatus(b.expiryDate, settings.expiryAlertDays);
-    return status === 'Vencido' || status === 'ProximoAVencer';
-  }).length;
-
-  const lowStockCount = products.filter((p) => {
-    if (p.status !== 'Activo') return false;
-    const summary = getProductStockSummary(p, batches, settings.expiryAlertDays);
-    return summary.stockStatus !== 'Normal';
-  }).length;
-
-  const totalAlerts = expiryAlertsCount + lowStockCount;
+  const { totalAlerts } = useMemo(() => {
+    return getInventoryAlerts(products, batches, settings.expiryAlertDays);
+  }, [products, batches, settings.expiryAlertDays]);
 
   const navSections: Array<{ title: string; items: NavItem[] }> = [
     {

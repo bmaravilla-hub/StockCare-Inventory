@@ -21,23 +21,29 @@ export const MovementsPage: React.FC = () => {
 
   const filteredMovements = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return movements.filter((m) => {
+    const result = movements.filter((m) => {
       if (productFilter && m.productId !== productFilter) return false;
       if (typeFilter && m.type !== typeFilter) return false;
       if (dateFrom && m.date < dateFrom) return false;
       if (dateTo && m.date > dateTo) return false;
       if (q) {
         const prod = products.find((p) => p.id === m.productId);
+        const prodName = (m.productName || prod?.name || '').toLowerCase();
+        const prodCode = (m.productCode || prod?.code || '').toLowerCase();
         const match =
           m.reference.toLowerCase().includes(q) ||
           m.batchNumber.toLowerCase().includes(q) ||
           m.user.toLowerCase().includes(q) ||
           m.detail.toLowerCase().includes(q) ||
-          (prod?.name.toLowerCase().includes(q) ?? false);
+          prodName.includes(q) ||
+          prodCode.includes(q);
         if (!match) return false;
       }
       return true;
     });
+
+    // Orden cronológico estricto: createdAt DESC (más recientes primero)
+    return [...result].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [movements, products, productFilter, typeFilter, dateFrom, dateTo, search]);
 
   const clearFilters = () => {
@@ -67,13 +73,15 @@ export const MovementsPage: React.FC = () => {
       header: 'Producto',
       render: (m) => {
         const prod = products.find((p) => p.id === m.productId);
+        const name = m.productName || prod?.name || 'Producto';
+        const code = m.productCode || prod?.code || '';
         return (
           <div>
             <p className="font-semibold text-slate-900">
-              {prod?.name ?? 'Producto'}
+              {name}
             </p>
             <p className="text-xs text-slate-500">
-              {prod?.code} • Lote <span className="font-mono">{m.batchNumber}</span>
+              {code ? `${code} • ` : ''}Lote <span className="font-mono font-medium text-slate-700">{m.batchNumber}</span>
             </p>
           </div>
         );

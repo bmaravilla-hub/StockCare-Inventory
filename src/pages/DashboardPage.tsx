@@ -18,11 +18,10 @@ import { DataTable, type TableColumn } from '../components/DataTable';
 import { BatchStatusBadge, MovementTypeBadge } from '../components/Badge';
 import { Alert } from '../components/Alert';
 import { useStockCare } from '../hooks/useStockCare';
-import { diffDaysFromToday, formatDateDisplay } from '../utils/date';
+import { formatDateDisplay } from '../utils/date';
 import {
-  getBatchExpiryStatus,
   getExpiryStatusLabel,
-  getProductStockSummary,
+  getInventoryAlerts,
 } from '../utils/inventory';
 
 interface ExpiringBatchRow {
@@ -46,43 +45,39 @@ export const DashboardPage: React.FC = () => {
     const activeProducts = products.filter((p) => p.status === 'Activo');
     const totalUnits = batches.reduce((sum, b) => sum + b.quantity, 0);
 
-    const lowStockProducts = activeProducts.filter((p) => {
-      const summary = getProductStockSummary(p, batches, settings.expiryAlertDays);
-      return summary.stockStatus === 'StockBajo' || summary.stockStatus === 'SinExistencias';
-    });
+    const alerts = getInventoryAlerts(products, batches, settings.expiryAlertDays);
 
-    const expiringBatches = batches
-      .filter((b) => {
-        if (b.quantity <= 0) return false;
-        const st = getBatchExpiryStatus(b.expiryDate, settings.expiryAlertDays);
-        return st === 'ProximoAVencer' || st === 'Vencido';
-      })
-      .map((b): ExpiringBatchRow => {
-        const prod = products.find((p) => p.id === b.productId);
-        return {
-          id: b.id,
-          productCode: prod?.code ?? 'N/A',
-          productName: prod?.name ?? 'Producto desconocido',
-          batchNumber: b.batchNumber,
-          quantity: b.quantity,
-          expiryDate: b.expiryDate,
-          daysRemaining: diffDaysFromToday(b.expiryDate),
-          status: getBatchExpiryStatus(b.expiryDate, settings.expiryAlertDays),
-        };
-      })
-      .sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
-
-    const expiredCount = expiringBatches.filter((b) => b.status === 'Vencido').length;
-    const soonCount = expiringBatches.filter((b) => b.status === 'ProximoAVencer').length;
+    const expiringBatches: ExpiringBatchRow[] = [
+      ...alerts.expiredBatches.map((b) => ({
+        id: b.id,
+        productCode: b.productCode,
+        productName: b.productName,
+        batchNumber: b.batchNumber,
+        quantity: b.quantity,
+        expiryDate: b.expiryDate,
+        daysRemaining: b.daysRemaining,
+        status: 'Vencido' as const,
+      })),
+      ...alerts.expiringSoonBatches.map((b) => ({
+        id: b.id,
+        productCode: b.productCode,
+        productName: b.productName,
+        batchNumber: b.batchNumber,
+        quantity: b.quantity,
+        expiryDate: b.expiryDate,
+        daysRemaining: b.daysRemaining,
+        status: 'ProximoAVencer' as const,
+      })),
+    ].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
 
     return {
       totalRegisteredProducts: products.length,
       activeProductsCount: activeProducts.length,
       totalUnits,
-      lowStockCount: lowStockProducts.length,
+      lowStockCount: alerts.outOfStockProducts.length + alerts.lowStockProducts.length,
       expiringBatches,
-      expiredCount,
-      soonCount,
+      expiredCount: alerts.expiredBatches.length,
+      soonCount: alerts.expiringSoonBatches.length,
       recentMovements: movements.slice(0, 6),
     };
   }, [products, batches, movements, settings.expiryAlertDays]);
