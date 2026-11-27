@@ -8,7 +8,7 @@ import { Button } from '../components/Button';
 import { DataTable, type TableColumn } from '../components/DataTable';
 import { BatchStatusBadge, StockLevelBadge } from '../components/Badge';
 import { ProductDetailModal } from '../features/products/ProductDetailModal';
-import { PRODUCT_CATEGORIES } from '../data/mockData';
+import { PRODUCT_CATEGORIES } from '../constants';
 import { useStockCare } from '../hooks/useStockCare';
 import type { BatchExpiryStatus, Product, StockLevelStatus } from '../types';
 import { formatDateDisplay } from '../utils/date';
